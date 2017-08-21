@@ -4,7 +4,7 @@
   "http://hibernate.sourceforge.net/hibernate-mapping-3.0.dtd">
 <hibernate-mapping>
 	<class name="com.otp.hibernate.pojo.Employee" table="employee"
-		schema="onlinetutorialspoint">
+		schema="hr">
 		<id name="employeeId" column="id">
 			<generator class="increment" />
 		</id>

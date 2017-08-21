@@ -17,12 +17,10 @@ import com.otp.hibernate.pojo.Employee;
 public class Main {
 
 	public static void main(String[] args) {
-		Configuration configuration = new Configuration()
-				.configure("hibernate.cfg.xml");
+		Configuration configuration = new Configuration().configure("hibernate.cfg.xml");
 		StandardServiceRegistryBuilder builder = new StandardServiceRegistryBuilder()
 				.applySettings(configuration.getProperties());
-		SessionFactory factory = configuration.buildSessionFactory(builder
-				.build());
+		SessionFactory factory = configuration.buildSessionFactory(builder.build());
 
 		Session session = factory.openSession();
 
@@ -43,7 +41,7 @@ public class Main {
 
 		Criteria crit2 = session.createCriteria(Employee.class);
 
-		Criterion criterion = Restrictions.eq("departmentId", 101);
+		Criterion criterion = Restrictions.eq("departmentId", 100);
 
 		crit2.add(criterion);
 
@@ -75,8 +73,7 @@ public class Main {
 
 		while (it3.hasNext()) {
 			Object[] obj = (Object[]) it3.next();
-			System.out.println("Salary : " + obj[0] + " DeptId : " + obj[1]
-					+ " empName : " + obj[2]);
+			System.out.println("Salary : " + obj[0] + " DeptId : " + obj[1] + " empName : " + obj[2]);
 		}
 
 		System.out.println("Projection Methods");
@@ -99,7 +96,7 @@ public class Main {
 
 		Criteria crit5 = session.createCriteria(Employee.class);
 
-		Criterion criterion5 = Restrictions.eq("departmentId", 101);
+		Criterion criterion5 = Restrictions.eq("departmentId", 100);
 		Projection projection5 = Projections.property("salary");
 
 		crit5.setProjection(projection5);
@@ -114,7 +111,6 @@ public class Main {
 			System.out.println("Salary : " + sal);
 		}
 
-		
 	}
 
 }
