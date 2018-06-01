@@ -1,0 +1,26 @@
+@RequestMapping("/showHistory")
+	public @ResponseBody List<STAConfigDetailVO> getSingleTouchApprovalHistory(
+			@RequestBody STAConfigDetailVO configDetailVO, Map<String, Object> model) {
+		logger.info("Entry the Class: SingleTouchApprovalController ---> method: getSingleTouchApprovalHistory");		
+		List<STAConfigDetailVO> staConfigHistory = null;
+		Integer pageSize = configDetailVO.getPageCount();
+		Integer pageNumber = configDetailVO.getPageNumber();
+		try {
+			iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(), getUserContext().getRoleId());
+			Integer fromIndex = 0;
+			if (pageNumber != 1) {
+				fromIndex = (pageNumber - 1) * pageSize;
+			}
+			configDetailVO.setFromIndex(fromIndex);
+			configDetailVO.setCountry(getUserCountry());			
+			staConfigHistory = iSingleTouchApprovalService.getSTAConfigHistory(configDetailVO);
+			if (staConfigHistory == null) {
+				return Collections.emptyList();
+			}
+		} catch (Exception e) {
+			logger.error("Error Getting Single Touch History" + e.getMessage());
+		}
+		logger.info("Exit the Class: SingleTouchApprovalController ---> method: getSingleTouchApprovalHistory");
+		return staConfigHistory;
+	}
+	
