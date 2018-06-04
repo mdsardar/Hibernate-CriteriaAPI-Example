@@ -1,0 +1,346 @@
+@Controller
+@RequestMapping("/singletouch")
+public class SingleTouchApprovalController extends BaseController {
+	private static final Logger logger = LoggerFactory.getLogger(SingleTouchApprovalController.class);
+
+	@Autowired
+	ISingleTouchApprovalService iSingleTouchApprovalService;
+	
+	/**
+	 * Used to get Error Messages
+	 */
+	@Autowired
+	private NonFormErrorMessageRenderUtil nonFormErrorMessageRenderUtil;
+	
+	@Autowired
+	private IParamConfigUtilService  paramConfigUtilService;
+
+	/**
+	 * 
+	 * @RequestMapping("/init")
+	 * Method Name: initSingleTouchApprovalConfig
+	 * Description: Method to fetch and dispaly Maker STA Maker Details
+	 * @return ModelAndView
+	 * @param 
+	 *
+	 */
+	@RequestMapping("/init")
+	public ModelAndView initSingleTouchApprovalConfig(Map<String, Object> model) {
+		logger.info("Entry the Class:SingleTouchApprovalController  ---> method:initSingleTouchApprovalConfig ");
+		ModelAndView mnv = new ModelAndView("/singleTouchApproval/singletouchapproval");
+		mnv = getSTAMakers(mnv, model);
+		List<PickListLkUpVO> clientTypePickListLkUpVO = super.getPickListWithSelect(AMLCDDConstants.CDD_CLIENT_TYPE);	
+		List<PickListLkUpVO> rrPickListLkUpVO = super.getPickListWithSelect(AMLCDDConstants.PICK_RISK_RATING);	
+		List<PickListLkUpVO> ynPickListLkUpVO = super.getPickListWithSelect(AMLCDDConstants.PICK_YE_NO);
+		mnv.addObject("ynList", ynPickListLkUpVO);	
+		mnv.addObject("clientTypeList", paramConfigUtilService.getClientTypeList(clientTypePickListLkUpVO));
+		mnv.addObject("riskRatingList", paramConfigUtilService.getRiskRatingList(rrPickListLkUpVO));
+	
+		if(paramConfigUtilService.isMakerORNot(getUserContext().getSystemRoles())){
+			mnv.addObject("isCompMaker", AMLCDDConstants.Y);
+		}else{
+			mnv.addObject("isCompMaker", AMLCDDConstants.N);
+		}
+		Integer pageCount = Integer.valueOf(amlCddCacheUtil.getAppConfig(AMLCDDConstants.PAGE_COUNT));
+		mnv.addObject("pageCount", pageCount);
+		Map<String, String> errorMsgs = nonFormErrorMessageRenderUtil.getScreenErrorMessages(getUserCountry(),
+				getUserContext().getDefaultLanguage(), Arrays.asList(AMLCDDConstants.STA_ERROR_CODES));
+		mnv.addObject("errorMsgs", errorMsgs);
+		model.put("staform", "sta"); 
+		logger.info("Exit the Class:SingleTouchApprovalController  ---> method:initSingleTouchApprovalConfig ");
+		return mnv;
+	}
+	
+	
+	/**
+	 * @RequestMapping("/checkerSingleTouch")
+	 * Method Name: initCheckerSingleTouchApprovalConfig
+	 * Description: Method to get and display STA Checker Details
+	 * @return ModelAndView
+	 * @param 
+	 *
+	 */
+	@RequestMapping("/checkerSingleTouch")
+	public ModelAndView initSingleTouchChecker(Map<String, Object> model,
+			@RequestParam("configId") String singleTouchId, @RequestParam("configName") String clientTypeRiskRate) {
+		logger.info("Entry the Class:SingleTouchApprovalController  ---> method:initSingleTouchChecker ");
+		ModelAndView mnv = new ModelAndView("/singleTouchApproval/singletouchapprovalchecker");	
+		String assineeValidationFlg=null;
+		String assigneeName=iSingleTouchApprovalService.getParameterAssigneeName(singleTouchId);
+		List<String> systemRoles= getUserContext().getSystemRoles();
+		if(assigneeName!=null && assigneeName.equalsIgnoreCase(getUserContext().getUserId()) &&  
+				paramConfigUtilService.isCheckerORNot(systemRoles)){
+			assineeValidationFlg=assigneeName;
+		}
+		mnv = getSTACheckers(mnv, model, singleTouchId);
+		mnv.addObject("assignFlag", assineeValidationFlg);
+		Map<String, String> errorMsgs = super.getScreenErrorMessages(Arrays.asList(AMLCDDConstants.STA_ERROR_CODES));
+		mnv.addObject("errorMsgs", errorMsgs);
+		logger.info("Exit the Class:SingleTouchApprovalController  ---> method:initSingleTouchChecker ");
+		return mnv;
+	}
+
+	/**
+	 * 
+	 * Method Name: getCheckerData
+	 * Description: Method to perform <Details>
+	 * @return ModelAndView
+	 * @param ModelAndView mav, Map<String, Object> model
+	 *
+	 */	
+	public ModelAndView getSTACheckers(ModelAndView mav, Map<String, Object> model, String singleTouchId) {
+		try {
+			logger.info("Getting STA Checker");
+			UserContext context = getUserContext();
+			if (context.getRoleId() != null)
+				iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(),
+						getUserContext().getRoleId());
+			List<STAConfigStagingVO> initialCheckerItems = iSingleTouchApprovalService.getCDDCheckers(singleTouchId);
+			Map<String, List<PickListLkUpVO>> pickListMap = getPickListWithSelect(
+					Arrays.asList(AMLCDDConstants.SINGLE_TOUCH_APPROVAL_PICK_LIST_TYPES));
+			model.put(AMLCDDConstants.SINGLE_TOUCH_APPROVAL, super.getUiLabels(AMLCDDConstants.SINGLE_TOUCH_APPROVAL));
+			model.put(AMLCDDConstants.COMMON, getUiLabels(AMLCDDConstants.COMMON));
+			model.put(AMLCDDConstants.SINGLE_TOUCH_APPROVAL_PICKLIST, pickListMap);
+			model.put("uiLabels", getUiLabels(AMLCDDConstants.TRIGGER_REFRESH_RULES_CONFIG));
+			mav.addObject("initialCheckerItems", initialCheckerItems);
+		} catch (Exception e) {
+			logger.error(e.getMessage());
+		}
+		return mav;
+	}
+	
+	/**
+	 * 
+	 * Method Name: getSTAMakers
+	 * Description: Method to perform <To compile maker STA >
+	 * @return ModelAndView
+	 * @param ModelAndView mav, Map<String, Object> model
+	 *
+	 */	
+	public ModelAndView getSTAMakers(ModelAndView mav, Map<String, Object> model) {
+		try{
+			logger.info("Getting STA Maker");
+			UserContext context = getUserContext();			
+			if(context.getRoleId() != null)
+			iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(), getUserContext().getRoleId());
+			List<STAConfigDetailVO> initialWorkFlowMakers = iSingleTouchApprovalService.getCDDMakers();
+			model.put(AMLCDDConstants.SINGLE_TOUCH_APPROVAL, super.getUiLabels(AMLCDDConstants.SINGLE_TOUCH_APPROVAL));
+			model.put(AMLCDDConstants.COMMON, getUiLabels(AMLCDDConstants.COMMON));
+			model.put("uiLabels", getUiLabels(AMLCDDConstants.TRIGGER_REFRESH_RULES_CONFIG));
+			mav.addObject("initialWorkFlowMakers", initialWorkFlowMakers);
+		}catch (Exception e) {
+			logger.error(e.getMessage());
+		}		
+		return mav;
+	}
+
+	/**
+	 * 
+	 * @PostMapping("/stageMaker")
+	 * Method Name: udpateSTADetails
+	 * Description: Method to Update Single Touch Approval Config 
+	 * @return void
+	 * @param 
+	 *
+	 */
+	@PostMapping("/stageMaker")
+	public @ResponseBody STAConfigDetailVO updateWorkflowConfig(@RequestBody STAConfigDetailVO configDetailVO) {
+		logger.info("Entry the Class:SingleTouchApprovalController  ---> method: updateWorkflowConfig");
+		logger.info("Saving Single Touch Config For Country: " + configDetailVO.getCountry() + "Auto Approval Status: "
+				+ configDetailVO.getAutoApproval().trim() + " ClientType: " + configDetailVO.getClientType()
+				+ "Risk Rating: " + configDetailVO.getFormRiskRating());
+		try {
+			UserContext context = getUserContext();
+			iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(), getUserContext().getRoleId());
+			if (null != context) {
+				configDetailVO.setUserId(context.getUserId());
+				/*if (AMLCDDConstants.ADD_PENDING.equals(configDetailVO.getAuthStatus())) {
+					configDetailVO.setCreatedBy(context.getUserName());
+					configDetailVO.setModifiedBy(context.getUserName());
+				} else {
+					configDetailVO.setModifiedBy(context.getUserName());
+				}*/
+				iSingleTouchApprovalService.updateSingleTouchConfig(configDetailVO,getUserContext().getSystemRoles());
+				configDetailVO = iSingleTouchApprovalService.getUpdatedRecord(configDetailVO);
+				if (AMLCDDConstants.ADD_PENDING.equals(configDetailVO.getAuthStatus())) {
+					configDetailVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_ADD_PASS);
+					logger.info("STA Add Config Initiated");
+				} else {
+					configDetailVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_UPDATE_PASS);
+					logger.info("STA Update Config Initiated");
+				}
+			}
+		} catch (Exception e) {
+			String errorMsgCode = AMLCDDConstants.EXCEPTION_CODE;
+			if (e != null) {
+				AmlCddException amlCddExp = (AmlCddException) e;
+				if (amlCddExp != null && amlCddExp.getExceptionDetails() != null) {
+					errorMsgCode = amlCddExp.getExceptionDetails().getExceptionCode();
+				}
+			}
+			if (CommonUtility.isNotNull(errorMsgCode)) {
+				configDetailVO.setStatusMessage(super.getScreenErrorMessage(errorMsgCode));
+			}
+			logger.error("Error Updating Single Touch Configuration " + e.getMessage());
+		}
+		logger.info("Exit the Class:SingleTouchApprovalController ---> method: updateWorkflowConfig");
+		return configDetailVO;
+	}
+	
+	/**
+	 *  
+	 * Method Name: deleteSingleTouchConfig
+	 * Description: Method to perform delete Single Touch Config
+	 * @return STAConfigDetailVO
+	 * @param List<STAConfigDetailVO>
+	 *
+	 */
+	@PostMapping("/delete")
+	public @ResponseBody STAConfigDetailVO deleteSingleTouchConfig(@RequestBody List<STAConfigDetailVO> staVOList) {
+		logger.info("Entry the Class: SingleTouchApprovalController  ---> method: deleteSingleTouchConfig ");
+		STAConfigDetailVO staConfigDetailVO = new STAConfigDetailVO();
+		UserContext context = getUserContext();
+		staVOList.forEach(staItem -> {
+			try {
+				if (CommonUtility.isNotNull(String.valueOf(context))) {
+					staItem.setModifiedBy(context.getUsername());
+					staItem.setUserId(context.getUserId());
+				}
+				iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(),
+						getUserContext().getRoleId());
+				iSingleTouchApprovalService.updateSingleTouchConfig(staItem,getUserContext().getSystemRoles());
+				staItem = iSingleTouchApprovalService.getUpdatedRecord(staItem);
+				BeanUtils.copyProperties(staItem, staConfigDetailVO);
+				staConfigDetailVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_DELETE_INIT_SUCCESS);
+			} catch (Exception x) {
+				staConfigDetailVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_DELETE_INIT_FAIL);
+				logger.error("Error Delete Single Touch" + x.getMessage());
+			}
+		});
+		logger.info("Exit the Class: SingleTouchApprovalController  ---> method: deleteSingleTouchConfig");
+		return staConfigDetailVO;
+	}
+	
+	/**	  
+	 * Method Name: updateChecker
+	 * Description: Method to perform <Details>
+	 * @return SingleTouchConfigVO
+	 * @param
+	 */	
+	@PostMapping("/checkerCDD")
+	public @ResponseBody STAConfigDetailVO updateChecker(@RequestBody List<STAConfigDetailVO> configDetailVOList) {
+		logger.debug("Entry the Class: SingleTouchApprovalController ---> method: updateChecker");
+		List<STAConfigDetailVO> staVOList = new ArrayList<>();
+		STAConfigDetailVO staConfigVO = new STAConfigDetailVO();
+		UserContext context = getUserContext();
+		List<String> approvedList = Arrays.asList(AMLCDDConstants.ADD_APPROVED, AMLCDDConstants.UPDATE_APPROVED,
+				AMLCDDConstants.DELETE_APPROVED);
+		List<String> rejectedList = Arrays.asList(AMLCDDConstants.ADD_REJECTED, AMLCDDConstants.UPDATE_REJECTED,
+				AMLCDDConstants.DELETE_REJECTED);
+		try {
+			iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(), getUserContext().getRoleId());
+			configDetailVOList.forEach(checkerVO -> {
+				if (approvedList.contains(checkerVO.getModifiedWorkflowStatus().trim())) {
+					checkerVO.setModifiedBy(context.getUserName());					
+				}				
+				staConfigVO.setModifiedWorkflowStatus(checkerVO.getModifiedWorkflowStatus());
+				staVOList.add(checkerVO);
+			});
+			iSingleTouchApprovalService.updateChecker(staVOList, context.getUsername(),getUserContext().getSystemRoles());
+			if (approvedList.contains(staConfigVO.getModifiedWorkflowStatus())) {
+				staConfigVO.setStatusMessage(AMLCDDConstants.STA_APPROVED_STS);
+			} else if (rejectedList.contains(staConfigVO.getModifiedWorkflowStatus())) {
+				staConfigVO.setStatusMessage(AMLCDDConstants.STA_REJECTED_STS);
+			}
+		} catch (Exception e) {
+			if (approvedList.contains(staConfigVO.getModifiedWorkflowStatus())) {
+				staConfigVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_APPROVED_FAILED);
+			} else if (rejectedList.contains(staConfigVO.getModifiedWorkflowStatus())) {
+				staConfigVO.setStatusMessage(AMLCDDConstants.SINGLE_TOUCH_REJECTION_FAILED);
+			}
+			logger.error("Error on Checker Update: " + e.getMessage());
+		}
+		logger.info("Exit the Class: SingleTouchApprovalController ---> method: updateChecker");
+		return staConfigVO;
+	}
+
+	/**	 
+	 * Method Name: getSingleTouchApprovalHistory
+	 * Description: Method to perform 
+	 * @return List<STAConfigDetailVO>
+	 * @param STAConfigDetailVO	 
+	 */
+	@RequestMapping("/showHistory")
+	public @ResponseBody List<STAConfigDetailVO> getSingleTouchApprovalHistory(
+			@RequestBody STAConfigDetailVO configDetailVO, Map<String, Object> model) {
+		logger.info("Entry the Class: SingleTouchApprovalController ---> method: getSingleTouchApprovalHistory");		
+		List<STAConfigDetailVO> staConfigHistory = null;
+		Integer pageSize = configDetailVO.getPageCount();
+		Integer pageNumber = configDetailVO.getPageNumber();
+		try {
+			iSingleTouchApprovalService.setUserContext(getUserCountry(), getLanguage(), getUserContext().getRoleId());
+			Integer fromIndex = 0;
+			if (pageNumber != 1) {
+				fromIndex = (pageNumber - 1) * pageSize;
+			}
+			configDetailVO.setFromIndex(fromIndex);
+			configDetailVO.setCountry(getUserCountry());			
+			staConfigHistory = iSingleTouchApprovalService.getSTAConfigHistory(configDetailVO);
+			if (staConfigHistory == null) {
+				return Collections.emptyList();
+			}
+		} catch (Exception e) {
+			logger.error("Error Getting Single Touch History" + e.getMessage());
+		}
+		logger.info("Exit the Class: SingleTouchApprovalController ---> method: getSingleTouchApprovalHistory");
+		return staConfigHistory;
+	}
+	
+	/**
+	 * Method Name: getHistoryCount
+	 * Description: Method to perform <Details>
+	 * @return Integer
+	 * @param 
+	 * 
+	 */
+	@RequestMapping(value = "/historyCount")
+	public @ResponseBody Integer getHistoryCount(@RequestBody STAConfigDetailVO configDetailVO) {
+		logger.info("Entry the Class: SingleTouchApprovalController ---> method: getHistoryCount");
+		List<STAConfigDetailVO> staConfigHistory = null;
+		Integer count = 0;
+		try {
+			configDetailVO.setFromIndex(null);
+			configDetailVO.setCountry(getUserCountry());
+			staConfigHistory = iSingleTouchApprovalService.getSTAConfigHistory(configDetailVO);
+			count = staConfigHistory.size();
+		} catch (Exception e) {
+			logger.error("Error on getHistoryCount " + e.getMessage());
+		}
+		logger.info("Exit the Class: SingleTouchApprovalController ---> method: getHistoryCount");
+		return count;
+	}
+	
+	/**
+	 * Method Name: getContextCountryCode
+	 * Description: Method to get Context Country Code
+	 * @return String
+	 * @param 
+	 * 
+	 */
+	@RequestMapping(value = "/getContextCountry")
+	public @ResponseBody String getSessionCountry() {
+		logger.info("Entry the Class: SingleTouchApprovalController ---> method: getSessionCountry");		
+		String ctyCode = "", ctyDesc = "";
+		ctyCode = getUserCountry();
+		try {
+			if (CommonUtility.isNotNull(ctyCode)) {	
+				ctyCode = "QO";
+				ctyDesc = iSingleTouchApprovalService.getStaCountry(ctyCode);
+			}
+			logger.debug("Logged in with Country  :" + ctyDesc);
+		} catch (Exception e) {
+			logger.error("Error getting session Country" + e.getMessage());
+		}
+		logger.info("Exit the Class: SingleTouchApprovalController ---> method: getSessionCountry");
+		return ctyDesc;
+	}
