@@ -1,0 +1,581 @@
+/*******************************************************************************
+ *ALL RIGHTS RESERVED.  Not for disclosure outside of Citigroup 
+ *and/or its subsidiaries without express prior written authorization.  
+  @ Title : SingleTouchApprovalDaoImpl.java
+  @ Author    : ms84042
+  @ Created On  : Sep 13, 2017
+  @ Description : <TODO: Class Details >
+******************************************************************************/
+
+package com.citigroup.amlcdd.useradmin.dao;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import org.hibernate.Query;
+import org.hibernate.SQLQuery;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Repository;
+
+import com.citigroup.amlcdd.common.constants.AMLCDDConstants;
+import com.citigroup.amlcdd.entity.KycCommentEntity;
+import com.citigroup.amlcdd.entity.SingleTouchApprovalEntity;
+import com.citigroup.amlcdd.entity.SingleTouchApprovalStagingEntity;
+import com.citigroup.amlcdd.entity.SingleTouchKeys;
+import com.citigroup.amlcdd.framework.dao.CDDBaseDaoImpl;
+import com.citigroup.amlcdd.framework.exception.AmlCddException;
+import com.citigroup.amlcdd.framework.util.CommonUtility;
+import com.citigroup.amlcdd.useradmin.vo.STAConfigDetailVO;
+
+/**
+ * Class to <SingleTouchApprovalDaoImpl>
+ */
+@Repository
+public class SingleTouchApprovalDaoImpl extends CDDBaseDaoImpl implements ISingleTouchApprovalDao {	
+
+	private static final Logger logger = LoggerFactory.getLogger(SingleTouchApprovalDaoImpl.class);
+	private static final String GET_STA_AUTO_APPROVAL_INDICATOR = "SELECT AUTO_APPROVAL FROM CDD_SINGE_TOUCH_CONFIG STPE WHERE STPE.CNTRY_CD = :countryCode AND STPE.CLIENT_TYPE = :clientType AND STPE.RISK_RATING = :riskRating AND STPE.AUTH_STATUS in (:activeStatus)";
+	private static final String GET_PARAM_ASSIGNE_NAME="SELECT TASK.WORK_ITEM_ASSIGNEE FROM KYC_TASK TASK WHERE   upper(TASK.WORK_ITEM_STATUS)=upper('RESERVED')  AND TASK.COMPONENT_ID =:paramId";	
+	private static final String GET_MAKERSANDCHECKERS_STA = "SELECT CSTC.SINGLE_TOUCH_ID , CSTC.CNTRY_CD, CSTC.CLIENT_TYPE, CSTC.RISK_RATING, CSTC.AUTO_APPROVAL STGAPPROVAL,CSTC.AUTH_STATUS,NVL(MAINTBL.CREATED_DT, CSTC.CREATED_DT) CREATED_DT, "
+			+ " NVL(MAINTBL.CREATED_BY, CSTC.CREATED_BY) CREATED_BY, CSTC.MODIFIED_DT,CSTC.MODIFIED_BY, MAINTBL.AUTO_APPROVAL MAINAPPROVAL "
+			+ " FROM CDD_SINGE_TOUCH_CONFIG_STG CSTC LEFT OUTER JOIN (SELECT * FROM CDD_SINGE_TOUCH_CONFIG WHERE AUTH_STATUS NOT IN ('INACTIVE')) maintbl ON (maintbl.CNTRY_CD  = CSTC.CNTRY_CD  AND maintbl.CLIENT_TYPE = CSTC.CLIENT_TYPE AND maintbl.RISK_RATING = CSTC.RISK_RATING) "
+			+ " WHERE CSTC.AUTH_STATUS NOT IN ('DELETE_APPROVED', 'ADD_REJECTED', 'INACTIVE') AND CSTC.MODIFIED_DT = (SELECT MAX(MODIFIED_DT) FROM CDD_SINGE_TOUCH_CONFIG_STG CSTCSTG WHERE CSTCSTG.CNTRY_CD  = CSTC.CNTRY_CD  AND CSTCSTG.CLIENT_TYPE = CSTC.CLIENT_TYPE AND CSTCSTG.RISK_RATING = CSTC.RISK_RATING )";
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * getInitialCheckerData()
+	 */
+	@Override
+	@SuppressWarnings("unchecked")
+	public List<SingleTouchApprovalStagingEntity> getCheckersRecords(String sid) throws Exception {
+		logger.info("Entry to DAO: SingleTouchApprovalDaoImpl, Method: getCheckersRecords");
+		List<String> checkerAuthStatusList = Arrays.asList(AMLCDDConstants.ADD_APPROVED,
+				AMLCDDConstants.UPDATE_APPROVED, AMLCDDConstants.DELETE_APPROVED, AMLCDDConstants.UPDATE_REJECTED,
+				AMLCDDConstants.ADD_REJECTED, AMLCDDConstants.DELETE_REJECTED);		
+		String ckrQry = " from SingleTouchApprovalStagingEntity as stastg where stastg.modifiedauthStatus not in (:checkerAuthStatusList) and stastg.staId = :staId"
+				+ " order by stastg.clientType asc, stastg.riskRating asc, stastg.modifiedauthStatus asc, stastg.modifiedDt desc";
+		Query query = getSession().createQuery(ckrQry);
+		query.setParameterList("checkerAuthStatusList", checkerAuthStatusList);
+		query.setParameter("staId", sid);
+		List<SingleTouchApprovalStagingEntity> initCheckers = (List<SingleTouchApprovalStagingEntity>) query.list();
+		logger.info("Exits DAO: SingleTouchApprovalDaoImpl, Method: getCheckersRecords");
+		return initCheckers;
+	}
+	
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * getInitialMakers()
+	 */
+	@SuppressWarnings("unchecked")
+	public List<SingleTouchApprovalStagingEntity> getInitialMakers(String sessionCty) throws Exception {
+		logger.info("Entry to the DAO: SingleTouchApprovalDaoImpl, Method: getInitialMakers"+ sessionCty);
+		logger.info("Getting Single Touch Approval Makers For Country: " + sessionCty);		
+		
+		logger.info("DAO: SingleTouchApprovalDaoImpl, Method: getInitialMakers");
+		logger.info("Getting Complete STA Config");			
+		
+		String inActiveStatus = AMLCDDConstants.SINGLE_TOUCH_INACTIVE;
+		SQLQuery query =(SQLQuery) getSession().createSQLQuery(GET_MAKERSANDCHECKERS_STA);		
+		ArrayList<SingleTouchApprovalStagingEntity> listSTAMakersEntity = new ArrayList<SingleTouchApprovalStagingEntity>();
+		List<Object[]> staList = query.list();		
+		if(staList!= null && staList.size() > 0) {
+			logger.info(" member Size " + staList.size());
+			SingleTouchApprovalStagingEntity objSTARecsEntity = null;
+			Iterator<Object[]> iterator = staList.iterator();
+			while (iterator.hasNext()) {
+				Object[] obj = iterator.next();
+				objSTARecsEntity = new SingleTouchApprovalStagingEntity();
+				objSTARecsEntity.setStaId(obj[0]== null ? "" : obj[0].toString());
+				objSTARecsEntity.setCountry(obj[1]== null ? "" : obj[1].toString());				
+				objSTARecsEntity.setClientType(obj[2] == null ? "" : obj[2].toString());
+				objSTARecsEntity.setRiskRating(obj[3] == null ? "" : obj[3].toString());
+				objSTARecsEntity.setModifiedautoApproval(obj[4] == null ? "" : obj[4].toString());
+				objSTARecsEntity.setModifiedauthStatus(obj[5] == null ? "" : obj[5].toString());
+				objSTARecsEntity.setCreatedDt((Date)obj[6]);
+				objSTARecsEntity.setCreatedBy(obj[7] == null ? "" :obj[7].toString());
+				objSTARecsEntity.setModifiedDt((Date)obj[8]);
+				objSTARecsEntity.setModifiedBy(obj[9] == null ? "" :obj[9].toString());
+				objSTARecsEntity.setVerNum(1L);
+				listSTAMakersEntity.add(objSTARecsEntity);
+			}
+		}
+		logger.info("Exits DAO: SingleTouchApprovalDaoImpl, Method: getInitialMakers"+ sessionCty);
+		return listSTAMakersEntity;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * updateSTADetails(com.citigroup.amlcdd.entity.SingleTouchApprovalEntity)
+	 */
+	@Override
+	public String saveSingleTouchApprovalDetails(SingleTouchApprovalStagingEntity stageToEntity) throws Exception {
+		logger.info("Entry to DAO: SingleTouchApprovalDaoImpl, Method: saveSingleTouchApprovalDetails");
+		logger.info("Save/Update Single Touch Approval Configuration for " + "Country: " + stageToEntity.getCountry()
+				+ "ClientType: " + stageToEntity.getClientType() + "Risk Rating: " + stageToEntity.getRiskRating()
+				+ "Auth Status" + stageToEntity.getModifiedauthStatus() + "Modified auto:"
+				+ stageToEntity.getModifiedautoApproval());
+		logger.info("Save/Update Staging For STA " + stageToEntity.toString());
+		List<String> pendingStatus = Arrays.asList(AMLCDDConstants.UPDATE_PENDING, AMLCDDConstants.DELETE_PENDING);		
+		String sTStageSeq = getSequenceNo(AMLCDDConstants.SINGLE_TOUCH_SEQ);		
+		if (CommonUtility.isNotNull(sTStageSeq.trim())) {
+			stageToEntity.setStaId(sTStageSeq);
+			getSession().save(stageToEntity);
+		}
+		/*String statusAfterUpdate = stageToEntity.getModifiedauthStatus().trim();	
+		String cty = stageToEntity.getCountry().trim();
+		String ctp = stageToEntity.getClientType().trim();
+		String rir = stageToEntity.getRiskRating().trim();
+		
+		Query stsUpdatQry = getSession().createQuery(
+				"update SingleTouchApprovalEntity sta set sta.authStatus = :statusToUpdate  where sta.staKey.country = :country and sta.staKey.clientType = :clientTyp and sta.staKey.riskRating = :rskRating");
+		stsUpdatQry.setParameter("statusToUpdate", statusAfterUpdate);
+		stsUpdatQry.setParameter("country", cty);
+		stsUpdatQry.setParameter("clientTyp", ctp);
+		stsUpdatQry.setParameter("rskRating", rir);
+
+		if (pendingStatus.contains(stageToEntity.getModifiedauthStatus().trim())) {
+			stsUpdatQry.executeUpdate();
+		} else if (stageToEntity.getModifiedauthStatus().trim().equals(AMLCDDConstants.ADD_PENDING)) {
+			insertNewToSTAEntity(stageToEntity);
+		}*/
+		logger.info("Single Touch Approval Configuration Saved For Staging");
+		logger.info("Exit DAO: SingleTouchApprovalDaoImpl, Method: saveSingleTouchApprovalDetails");
+		return sTStageSeq;
+	}
+
+	/**
+	 * 
+	 * Method Name: getAutoApprovalIndicator 
+	 * Description: Method to perform 
+	 * <getAutoApprovalIndicator> 
+	 * Usage: Catch the Auto Approval Flag For Specified Risk Rating 
+	 * @return boolean
+	 * @param
+	 *
+	 */
+	public boolean getAutoApprovalIndicator(String countryCode, String clientType, String riskRating)
+			throws AmlCddException {
+		String activeStatus = AMLCDDConstants.SINGLE_TOUCH_APPROVED;
+		boolean autoAppInd = false;
+		char autoApprovalStatus = 'Y';
+		SQLQuery query = (SQLQuery) getSession().createSQLQuery(GET_STA_AUTO_APPROVAL_INDICATOR)
+				.setParameter("countryCode", countryCode).setParameter("clientType", clientType)
+				.setParameter("riskRating", riskRating).setParameter("activeStatus", activeStatus);
+		Object c = query.uniqueResult();
+		if (c != null) {
+			autoAppInd = (autoApprovalStatus == (char) c);
+		}
+		return autoAppInd;
+	}
+		
+	/**
+	 * 
+	 * Method Name: insertNewToSTAEntity 
+	 * Description: Method to perform add new STA Config
+	 * @return void
+	 * @param SingleTouchApprovalStagingEntity
+	 *
+	 */
+	private void insertNewToSTAEntity(SingleTouchApprovalStagingEntity sgEty) throws Exception {
+		logger.info("Entry to the DAO:SingleTouchApprovalDaoImpl  ---> method: insertNewToSTAEntity ");
+		SingleTouchApprovalEntity stAEty = new SingleTouchApprovalEntity();
+		SingleTouchKeys stkey = new SingleTouchKeys();
+		String addCfgMkrQry, modifiedBy, country, clientTyp, rskRating, authStatus, autoApproval, createdBy;
+		Date modifiedDt, createdDt;
+		Date modifiedDat = new Timestamp(System.currentTimeMillis());
+		Date createdDat = new Timestamp(System.currentTimeMillis());		
+		country = sgEty.getCountry().trim();
+		clientTyp = sgEty.getClientType().trim();
+		rskRating = sgEty.getRiskRating().trim();
+		authStatus = sgEty.getModifiedauthStatus().trim();
+		autoApproval = sgEty.getModifiedautoApproval().trim();
+		modifiedDt = sgEty.getModifiedDt();
+		createdDt = sgEty.getCreatedDt();
+		modifiedBy = sgEty.getModifiedBy().trim();
+		createdBy = sgEty.getCreatedBy().trim();
+		stAEty.setStaKey(stkey);
+		stAEty.getStaKey().setCountry(country);
+		stAEty.getStaKey().setClientType(clientTyp);
+		stAEty.getStaKey().setRiskRating(rskRating);
+		stAEty.setStaId(sgEty.getStaId());
+		stAEty.setAutoApproval(autoApproval);
+		stAEty.setAuthStatus(authStatus);
+		stAEty.setCreatedBy(createdBy);
+		stAEty.setCreatedDt(createdDt);
+		stAEty.setModifiedBy(modifiedBy);
+		stAEty.setModifiedDt(modifiedDt);
+		
+		modifiedBy = sgEty.getModifiedBy().trim();
+		addCfgMkrQry = "select count(*) from SingleTouchApprovalEntity sing where sing.staKey.country = :country and sing.staKey.clientType = :clientTyp and sing.staKey.riskRating = :rskRating ";
+		Query query = getSession().createQuery(addCfgMkrQry);
+		query.setParameter("country", country);
+		query.setParameter("clientTyp", clientTyp);
+		query.setParameter("rskRating", rskRating);
+		Long count = (Long) query.uniqueResult();
+		if (count == 1) {
+			if ((sgEty.getModifiedauthStatus()).equals(AMLCDDConstants.ADD_PENDING)) {
+				Query upqry = getSession().createQuery(
+						"update SingleTouchApprovalEntity sintae set sintae.staId =:sidForStatus, sintae.authStatus =:authStatus, sintae.modifiedDt =:modifiedDat, sintae.createdDt =:createdDat, sintae.modifiedBy =:modifiedBy, sintae.createdBy =:createdBy  where sintae.staKey.country =:country and sintae.staKey.clientType =:clientTyp and sintae.staKey.riskRating =:rskRating");
+				upqry.setParameter("country", country);
+				upqry.setParameter("clientTyp", clientTyp);
+				upqry.setParameter("rskRating", rskRating);
+				// upqry.setParameter("authStatus", AMLCDDConstants.ADD_PENDING);
+				upqry.setParameter("modifiedDat", modifiedDat);
+				upqry.setParameter("createdDat", createdDat);
+				upqry.setParameter("modifiedBy", modifiedBy);
+				upqry.setParameter("createdBy",createdBy);
+				upqry.executeUpdate();
+			}
+		} else {
+			getSession().save(stAEty);
+		}
+		logger.info("New STA Config Added");
+		logger.info("Exits the DAO:SingleTouchApprovalDaoImpl  <--- method: insertNewToSTAEntity ");
+	}
+
+	/**
+	 * 
+	 * Method Name: getHistoryDetails 
+	 * Description: Method to perform to get History Details 
+	 * @return List<STAConfigStagingVO>
+	 * @param STAConfigDetailVO
+	 *
+	 */
+	@SuppressWarnings("unchecked")
+	public List<SingleTouchApprovalStagingEntity> getHistoryDetails(STAConfigDetailVO configDetailVO) throws Exception {
+		logger.info("Entry to the DAO:SingleTouchApprovalDaoImpl  ---> method: getHistoryDetails");
+		SimpleDateFormat formatter = new SimpleDateFormat(AMLCDDConstants.DATE_FORMAT_MMDDYYYY);
+		Date fmDate = null;
+		Date tooDate = null;
+		String sessionCountry = configDetailVO.getCountry();
+		Query query = null;
+		List<String> pendingApprovalLst = Arrays.asList(AMLCDDConstants.ADD_PENDING,AMLCDDConstants.UPDATE_PENDING, AMLCDDConstants.DELETE_PENDING);		
+		if ((CommonUtility.isNotNull(configDetailVO.getFromDate())
+				&& !CommonUtility.isEmptyString(configDetailVO.getFromDate()))
+				&& (CommonUtility.isNotNull(configDetailVO.getToDate())
+				&& !CommonUtility.isEmptyString(configDetailVO.getToDate()))
+				&& !CommonUtility.isEmptyString(configDetailVO.getCountry())) {
+			fmDate = formatter.parse(configDetailVO.getFromDate());
+			tooDate = formatter.parse(configDetailVO.getToDate());			
+		}
+		if (tooDate == null) {
+			tooDate = new Date(new Date().getTime() + (1000 * 60 * 60 * 24));
+		} else
+			tooDate = new Date(tooDate.getTime() + (1000 * 60 * 60 * 24));
+
+		String autoAuthStatus = configDetailVO.getAuthStatus();
+		List<SingleTouchApprovalStagingEntity> lstSingleTouchApprovalStagingEntity = null;
+		List<String> authstarusval= new ArrayList<String>();
+		if (autoAuthStatus.equalsIgnoreCase("pending approval")) {
+			authstarusval = pendingApprovalLst;
+		} else {
+			authstarusval.add(autoAuthStatus);
+		}
+		
+		if (CommonUtility.isNotNull(configDetailVO.getFromDate()) && CommonUtility.isNotNull(configDetailVO.getToDate())
+				&& CommonUtility.isNotNull(autoAuthStatus) && autoAuthStatus.equalsIgnoreCase("ALL")) {
+			query = getSession().createQuery(
+					"from SingleTouchApprovalStagingEntity stsg where stsg.country = :countryCode AND stsg.modifiedDt BETWEEN :fromDate AND :toDate order by stsg.modifiedDt desc");
+			query.setParameter("fromDate", fmDate);
+			query.setParameter("toDate", tooDate);
+			query.setParameter("countryCode", sessionCountry);
+		}	else if (!autoAuthStatus.equalsIgnoreCase("ALL") && CommonUtility.isNotNull(configDetailVO.getFromDate())
+				&& CommonUtility.isNotNull(configDetailVO.getToDate())) {
+			
+			query = getSession().createQuery(
+					"from SingleTouchApprovalStagingEntity stsg where stsg.country =:countryCode AND stsg.modifiedauthStatus in (:authStatus) AND stsg.modifiedDt BETWEEN :fromDate AND :toDate order by stsg.modifiedDt desc");			
+			query.setParameterList("authStatus", authstarusval);
+			query.setParameter("fromDate", fmDate);
+			query.setParameter("toDate", tooDate);
+			query.setParameter("countryCode", sessionCountry);
+
+		} else if (!"ALL".equalsIgnoreCase(autoAuthStatus) && CommonUtility.isNull(configDetailVO.getFromDate())
+				&& CommonUtility.isNull(configDetailVO.getToDate())) {
+			query = getSession().createQuery(
+					"from SingleTouchApprovalStagingEntity stsg where stsg.country =:countryCode AND stsg.modifiedauthStatus in (:authStatus) order by stsg.modifiedDt desc ");			
+			query.setParameterList("authStatus", authstarusval);
+			query.setParameter("countryCode", sessionCountry);
+		} else {
+			query = getSession().createQuery(
+					"from SingleTouchApprovalStagingEntity stsg where stsg.country =:countryCode and stsg.modifiedDt IS NOT NULL order by stsg.modifiedDt desc");
+			query.setParameter("countryCode", sessionCountry);
+		}
+		if (configDetailVO.getFromIndex() != null) {
+			query.setMaxResults(configDetailVO.getPageCount());
+			query.setFirstResult(configDetailVO.getFromIndex());
+		}
+		lstSingleTouchApprovalStagingEntity = query.list();
+		logger.info("Exits the DAO:SingleTouchApprovalDaoImpl  ---> method: getHistoryDetails");
+		return lstSingleTouchApprovalStagingEntity;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * getUpdatedRecord()
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public SingleTouchApprovalStagingEntity getUpdatedRecord(STAConfigDetailVO staVO) throws Exception {
+		logger.info("Entry to the DAO: SingleTouchApprovalDaoImpl  ---> method: getUpdatedRecord");
+		String aStatus = staVO.getModifiedWorkflowStatus();
+		String ctyCode = staVO.getCountry();
+		String clientTyp = staVO.getClientType();
+		String risRate = staVO.getFormRiskRating();
+		List<SingleTouchApprovalStagingEntity> stagingList = new ArrayList<SingleTouchApprovalStagingEntity>();
+		if (ctyCode != null && clientTyp != null && risRate != null) {
+			String hql = "from SingleTouchApprovalStagingEntity as a where a.country = :ctyCode AND a.clientType = :clientTyp AND a.riskRating = :risRate AND a.modifiedauthStatus = :aStatus "
+					+ " and a.modifiedDt IN(select max(modifiedDt) from SingleTouchApprovalStagingEntity as b where a.country = b.country and a.clientType = b.clientType and a.riskRating = b.riskRating and a.modifiedauthStatus = b.modifiedauthStatus)";
+			Query qry = getSession().createQuery(hql);
+			qry.setParameter("ctyCode", ctyCode);
+			qry.setParameter("clientTyp", clientTyp);
+			qry.setParameter("risRate", risRate);
+			qry.setParameter("aStatus", aStatus);
+			stagingList = qry.list();
+		}
+		SingleTouchApprovalStagingEntity stageEntity = new SingleTouchApprovalStagingEntity();
+		if (!stagingList.isEmpty() && stagingList != null) {
+			stageEntity = stagingList.get(0);
+		}
+		logger.info("Exits the DAO: SingleTouchApprovalDaoImpl <--- method: getUpdatedRecord");
+		return stageEntity;
+	}
+	
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * getUpdatedRecord()
+	 */
+	@Override
+	public SingleTouchApprovalEntity getBeforeUpdate(STAConfigDetailVO staVO) throws Exception {
+		logger.info("Enters the Class: SingleTouchApprovalDaoImpl  ---> method: getBeforeUpdate");
+		String aStatus = staVO.getModifiedWorkflowStatus();
+		String ctyCode = staVO.getCountry();
+		String clientTyp = staVO.getClientType();
+		String risRate = staVO.getFormRiskRating();
+		List<SingleTouchApprovalEntity> staEtyList = new ArrayList<SingleTouchApprovalEntity>();
+		if (ctyCode != null && clientTyp != null && risRate != null) {
+			String hql = "from SingleTouchApprovalEntity as a where a.staKey.country = :ctyCode AND a.staKey.clientType = :clientTyp AND a.staKey.riskRating = :risRate";			
+			Query qry = getSession().createQuery(hql);
+			qry.setParameter("ctyCode", ctyCode);
+			qry.setParameter("clientTyp", clientTyp);
+			qry.setParameter("risRate", risRate);
+			staEtyList = qry.list();
+		}
+		SingleTouchApprovalEntity staEntity = new SingleTouchApprovalEntity();
+		if (staEtyList != null && !staEtyList.isEmpty()) {
+			staEntity = staEtyList.get(0);
+		}
+		logger.info("Exits the Class: SingleTouchApprovalDaoImpl ---> method: getBeforeUpdate");
+		return staEntity;
+	}
+
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see
+	 * com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#updateChecker(
+	 * java.util.List)
+	 */
+	@Override
+	public List<SingleTouchApprovalEntity> updateChecker(List<SingleTouchApprovalEntity> lstSingleTouchEntity)
+			throws Exception {
+		logger.info("Entry to the DAO:SingleTouchApprovalDaoImpl  ---> method: updateChecker");
+		String stringQuery = null;
+		stringQuery = "select count(*) from SingleTouchApprovalEntity sing where sing.staKey.country = :country and sing.staKey.clientType = :clientTyp and sing.staKey.riskRating = :rskRating ";
+		Date modifiedDt = null;
+		String modifiedBy = null;		
+		List<SingleTouchApprovalEntity> singleTouchApprovalEntity = new ArrayList<>();
+		for (SingleTouchApprovalEntity staEntity : lstSingleTouchEntity) {
+			// Bulk STA checker update/delete operations
+			if (!staEntity.getAuthStatus().equals(AMLCDDConstants.ADD_APPROVED)) {
+				String country = staEntity.getStaKey().getCountry().trim();
+				String clientTyp = staEntity.getStaKey().getClientType().trim();
+				String rskRating = staEntity.getStaKey().getRiskRating().trim();
+				String authStatus = staEntity.getAuthStatus().trim();
+				String autoApproval = staEntity.getAutoApproval().trim();
+				modifiedDt = new Timestamp(System.currentTimeMillis());
+				modifiedBy = staEntity.getModifiedBy().trim();
+				
+
+				Query query = getSession().createQuery(stringQuery);
+				query.setParameter("country", country);
+				query.setParameter("clientTyp", clientTyp);
+				query.setParameter("rskRating", rskRating);				
+				Long count = (Long) query.uniqueResult();
+				if (count == 1) {
+					if ((staEntity.getAuthStatus()).equals(AMLCDDConstants.UPDATE_APPROVED)) {
+						Query upqry = getSession().createQuery(
+								"update SingleTouchApprovalEntity sintae set sintae.autoApproval = :autoAppSts, sintae.modifiedBy =:modifiedBy, sintae.modifiedDt =:modifiedDt where sintae.staKey.country =:country and sintae.staKey.clientType =:clientTyp and sintae.staKey.riskRating =:rskRating");
+						upqry.setParameter("country", country);
+						upqry.setParameter("clientTyp", clientTyp);
+						upqry.setParameter("rskRating", rskRating);
+						upqry.setParameter("modifiedDt", modifiedDt);
+						upqry.setParameter("modifiedBy", modifiedBy);
+						upqry.setParameter("autoAppSts", autoApproval);
+						//upqry.setParameter("authStatus", AMLCDDConstants.APPROVED);
+						upqry.executeUpdate();
+					} 
+					/*else if ((staEntity.getAuthStatus()).equals(AMLCDDConstants.UPDATE_REJECTED)
+							|| (staEntity.getAuthStatus()).equals(AMLCDDConstants.DELETE_REJECTED)) {
+						Query upqry = getSession().createQuery(
+								"update SingleTouchApprovalEntity sintae set sintae.authStatus =:authStatus where sintae.staKey.country =:country and sintae.staKey.clientType =:clientTyp and sintae.staKey.riskRating =:rskRating");
+						upqry.setParameter("country", country);
+						upqry.setParameter("clientTyp", clientTyp);
+						upqry.setParameter("rskRating", rskRating);
+						upqry.setParameter("authStatus", AMLCDDConstants.APPROVED);
+						upqry.executeUpdate();
+					}*/ 
+					else if ((staEntity.getAuthStatus()).equals(AMLCDDConstants.DELETE_APPROVED)) {
+						Query delqry = getSession().createQuery(
+								"update SingleTouchApprovalEntity s set s.authStatus= :deleteFlg, s.modifiedDt= :modifiedDt, s.modifiedBy= :modifiedBy where s.staKey.country=:country AND s.staKey.clientType=:clientTyp AND s.staKey.riskRating=:rskRating");
+						delqry.setParameter("deleteFlg", AMLCDDConstants.SINGLE_TOUCH_INACTIVE);
+						delqry.setParameter("modifiedDt", modifiedDt);
+						delqry.setParameter("modifiedBy", modifiedBy);
+						delqry.setParameter("country", country);
+						delqry.setParameter("clientTyp", clientTyp);
+						delqry.setParameter("rskRating", rskRating);
+						delqry.executeUpdate();
+					}
+					/*else if ((staEntity.getAuthStatus()).equals(AMLCDDConstants.ADD_REJECTED)) {
+						Query delqry = getSession().createQuery(
+								"update SingleTouchApprovalEntity s set s.authStatus= :insertFlg, s.modifiedDt= :modifiedDt, s.modifiedBy= :modifiedBy where s.authStatus=:authPriorStatus and  s.staKey.country=:country AND s.staKey.clientType=:clientTyp AND s.staKey.riskRating=:rskRating");
+						delqry.setParameter("insertFlg", AMLCDDConstants.SINGLE_TOUCH_INACTIVE);
+						delqry.setParameter("authPriorStatus", AMLCDDConstants.ADD_PENDING);
+						delqry.setParameter("modifiedDt", modifiedDt);
+						delqry.setParameter("modifiedBy", modifiedBy);
+						delqry.setParameter("country", country);
+						delqry.setParameter("clientTyp", clientTyp);
+						delqry.setParameter("rskRating", rskRating);
+						delqry.executeUpdate();
+					}*/
+				}
+			}
+			// To Get done with New STA Configuration 
+			else {
+				String country = staEntity.getStaKey().getCountry().trim();
+				String clientTyp = staEntity.getStaKey().getClientType().trim();
+				String rskRating = staEntity.getStaKey().getRiskRating().trim();
+				String authStatus = staEntity.getAuthStatus().trim();
+				String autoApproval = staEntity.getAutoApproval().trim();
+				modifiedDt = new Timestamp(System.currentTimeMillis());
+				modifiedBy = staEntity.getModifiedBy().trim();
+				String createdBy = staEntity.getCreatedBy();
+				Date createdDt = staEntity.getCreatedDt();
+				//String sidValAdd = getSequenceNo(AMLCDDConstants.SINGLE_TOUCH_SEQ).trim();
+				String sidVal = staEntity.getStaId();
+				Query query = getSession().createQuery(stringQuery);
+				query.setParameter("country", country);
+				query.setParameter("clientTyp", clientTyp);
+				query.setParameter("rskRating", rskRating);
+				Long count = (Long) query.uniqueResult();
+				if (count == 1) {
+					Query insqry = getSession().createQuery(
+							"update SingleTouchApprovalEntity s set s.staId =:sid, s.autoApproval= :autoApproval, s.authStatus= :insertFlg, s.modifiedDt= :modifiedDt, s.modifiedBy= :modifiedBy, s.createdDt =:createdDt, s.createdBy =:createdBy where s.staKey.country=:country AND s.staKey.clientType=:clientTyp AND s.staKey.riskRating=:rskRating");
+					insqry.setParameter("autoApproval", autoApproval);
+					insqry.setParameter("insertFlg", AMLCDDConstants.APPROVED);					
+					insqry.setParameter("modifiedDt", modifiedDt);
+					insqry.setParameter("modifiedBy", modifiedBy);
+					insqry.setParameter("createdDt", createdDt);
+					insqry.setParameter("createdBy", createdBy);
+					insqry.setParameter("country", country);
+					insqry.setParameter("clientTyp", clientTyp);
+					insqry.setParameter("rskRating", rskRating);
+					insqry.setParameter("sid", sidVal);
+					insqry.executeUpdate();
+				}
+				else {
+					staEntity.setAuthStatus(AMLCDDConstants.APPROVED);
+					staEntity.setStaId(sidVal);
+					getSession().save(staEntity);
+					singleTouchApprovalEntity.add(staEntity);
+				}
+			}
+		}
+		logger.info("Exits the DAO:SingleTouchApprovalDaoImpl <--- method: UpdateChecker");
+		return singleTouchApprovalEntity;
+
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.citigroup.amlcdd.useradmin.dao.ISingleTouchApprovalDao#
+	 * updateSingleTouchConfig(java.util.List)
+	 */
+	@Override
+	public String updateSingleTouchConfig(List<SingleTouchApprovalStagingEntity> configDetailEntities) throws Exception {
+		logger.info("Entry to the DAO:SingleTouchApprovalDaoImpl ---> method: updateSingleTouchConfig");		
+		String singleTouchSeq = "";
+		List<String> statusList = Arrays.asList(AMLCDDConstants.ADD_PENDING, AMLCDDConstants.UPDATE_PENDING,
+				AMLCDDConstants.DELETE_PENDING, AMLCDDConstants.UPDATE_APPROVED, AMLCDDConstants.ADD_APPROVED,
+				AMLCDDConstants.DELETE_APPROVED, AMLCDDConstants.ADD_REJECTED, AMLCDDConstants.UPDATE_REJECTED,
+				AMLCDDConstants.DELETE_REJECTED);
+		for (SingleTouchApprovalStagingEntity staLkupStagingEntity : configDetailEntities) {
+			if (statusList.contains(staLkupStagingEntity.getModifiedauthStatus().trim())) {
+				singleTouchSeq = getSequenceNo(AMLCDDConstants.SINGLE_TOUCH_SEQ).trim();
+				staLkupStagingEntity.setStaId(singleTouchSeq);
+				getSession().save(staLkupStagingEntity);
+			}
+		}
+		logger.info("Exits the DAO: SingleTouchApprovalDaoImpl <--- method: updateSingleTouchConfig");
+		return singleTouchSeq;
+	}
+
+	/**
+	 * 
+	 * Method Name: updateComments 
+	 * Description: Method to perform STA Makers / Checkers Update Comments	 * 
+	 * @return void
+	 * @param STAConfigDetailVO
+	 *
+	 */
+	@Override
+	public void updateComments(STAConfigDetailVO staConfigVO) throws Exception {
+		logger.info("Entry to the DAO:SingleTouchApprovalDaoImpl ---> method : updateComments");
+		KycCommentEntity staComment = new KycCommentEntity();
+		staComment.setCmntId(getSequenceNo(AMLCDDConstants.SINGLE_TOUCH_CMNT_SEQ));
+		staComment.setComponentId(String.valueOf(staConfigVO.getStaId()));
+		staComment.setSectionNm(AMLCDDConstants.SINGLE_TOUCH_APPROVAL);
+		if (CommonUtility.isNotNull(staConfigVO.getCountry())) {
+			staComment.setCntryCde(staConfigVO.getCountry());
+		} else
+			staComment.setCntryCde(this.getUserCountry());
+		staComment.setComments(staConfigVO.getComments());
+		staComment.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+		staComment.setCreatedBy(staConfigVO.getCreatedBy());
+		staComment.setModifiedBy(staConfigVO.getModifiedBy());
+		staComment.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+		getSession().save(staComment);
+		logger.info("Exits the DAO: SingleTouchApprovalDaoImpl <--- method: updateComments");
+	}
+	@Override
+	public String getParameterAssigneeName(String pickListId){
+		String resultAssignee="";
+		Query resultQuery  = getSession().createSQLQuery(GET_PARAM_ASSIGNE_NAME);
+		resultQuery.setParameter("paramId", pickListId);
+		@SuppressWarnings("unchecked")
+		List<String> result=resultQuery.list();
+		if(result!=null && result.size() >0){
+			for(String name:result){
+				resultAssignee=name;
+			}
+		}
+		return resultAssignee;
+	}
+}
