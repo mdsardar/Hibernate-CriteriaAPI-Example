@@ -1,0 +1,297 @@
+
+/*******************************************************************************
+ *ALL RIGHTS RESERVED.  Not for disclosure outside of Citigroup 
+ *and/or its subsidiaries without express prior written authorization.  
+  @ Title : AppInitializer.java
+  @ Author    : jm73429
+  @ Created On  : Aug 7, 2017
+  @ Description : <AppInitializer class to initialize the cache for AppConfig,UIlabels and PickListData >
+******************************************************************************/
+
+package com.citigroup.amlcdd.framework.service;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.PostConstruct;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.CacheManager;
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Service;
+
+import com.citigroup.amlcdd.common.constants.AMLCDDConstants;
+import com.citigroup.amlcdd.forms.questions.util.FormQuestionRenderUtil;
+import com.citigroup.amlcdd.forms.questions.vo.FormQuestionKeyVO;
+import com.citigroup.amlcdd.forms.questions.vo.FormQuestionMapVO;
+import com.citigroup.amlcdd.forms.risksummary.service.IRiskSummaryService;
+import com.citigroup.amlcdd.forms.risksummary.vo.RiskSummaryVO;
+import com.citigroup.amlcdd.framework.dao.IEntityManagersInitialiser;
+import com.citigroup.amlcdd.framework.dao.IPickListLkUpDao;
+import com.citigroup.amlcdd.framework.dao.IUiLabelsDao;
+import com.citigroup.amlcdd.framework.util.CommonUtility;
+import com.citigroup.amlcdd.framework.vo.PickListLkUpVO;
+import com.citigroup.amlcdd.framework.vo.UiLabelVO;
+
+@Service
+public class AppInitializer {
+
+	private final Logger LOGGER = LoggerFactory.getLogger(AppInitializer.class);
+
+	// Map for Application Configuration.
+	// Key: Configuration Type, Value: Configuration Value
+	private Map<String, String> appConfigMap = null;
+	// Map for Picklist for the default language.
+	// Key: Pick list Type, Value: Map of Picklist
+	private Map<String, Map<String, List<PickListLkUpVO>>> pickListMap = new HashMap<String, Map<String, List<PickListLkUpVO>>>();
+	private Map<String, Map<String, String>> appCountryConfigMap = new HashMap<String, Map<String, String>>();
+
+	// Map for UI Lables. Key:Languahe with Country Prefix, Screen Name, Map of
+	// UI lables in the screen.
+	private Map<String, Map<String, Map<String, UiLabelVO>>> uiLablesMap = new HashMap<String, Map<String, Map<String, UiLabelVO>>>();
+
+	private Map<String, Map<FormQuestionKeyVO, FormQuestionMapVO>> langQstCacheMap = new LinkedHashMap<String, Map<FormQuestionKeyVO, FormQuestionMapVO>>();
+
+	private Map<String, Map<String, Map<String, RiskSummaryVO>>> riskSmmryQstCacheMap = new LinkedHashMap<String, Map<String, Map<String, RiskSummaryVO>>>();
+
+	@Autowired
+	private CacheManager cacheManager;
+
+	@Autowired
+	private IPickListLkUpDao pickListLkupDao;
+
+	@Autowired
+	private IUiLabelsDao uiLabelsDao;
+
+	@Autowired
+	private FormQuestionRenderUtil formQuestionRenderUtil;	
+
+	@Autowired
+	IRiskSummaryService riskSummaryService;
+
+	@Autowired
+	private IEntityManagersInitialiser emInitializer;
+
+	@Autowired
+	private Environment environment;
+
+	FileOutputStream fout = null;
+	ObjectOutputStream objectOut = null;
+	FileInputStream fileInputStreemObj = null;
+	ObjectInputStream objectInputStreemObj = null;
+	File questionaireFile = null;
+	File picklistFile = null;
+	File uiLabelFile = null;
+	File appConfig = null;
+	File riskSummaryFile = null;
+
+	/**
+	 * @method: This method initializes spring ehcache for appconfig, uilabels,
+	 *          question labels and picklist data. Method loads the cacheable
+	 *          data for the system: App Config data Picklist Data UI Labels
+	 *          Questionnaire for Forms
+	 */
+	@PostConstruct
+	public void initialize() {
+		final String methodNname = "initialize()";
+		String cntryLanguage = "";
+		long startTiming = System.currentTimeMillis();
+		try {
+			LOGGER.info("Loading cache data for AppConfig");
+			emInitializer.loadEntityManagerFactories();
+			String environmentValue = environment.getProperty(AMLCDDConstants.ENVIRONMENT);
+			if (AMLCDDConstants.LOCAL.equalsIgnoreCase(environmentValue)) {
+				LOGGER.info("Loading cache data From local file");
+				questionaireFile = new File(environment.getProperty(AMLCDDConstants.QUESTIONAIRECACHEFILENAME));
+				picklistFile = new File(environment.getProperty(AMLCDDConstants.PICKLISTCACHEFILENAME));
+				uiLabelFile = new File(environment.getProperty(AMLCDDConstants.UILABLECACHEFILE));
+				appConfig = new File(environment.getProperty(AMLCDDConstants.APPCONFIGFILE));
+				riskSummaryFile = new File(environment.getProperty(AMLCDDConstants.RISKSUMMARY));
+			}
+			if((questionaireFile != null && questionaireFile.exists())
+					&& (picklistFile != null && picklistFile.exists()) 
+					&& ( uiLabelFile!= null && uiLabelFile.exists())){
+				readCachedDataFromLocalFile();
+			} else {
+				LOGGER.info("Loading cache data From Database");
+				String countryFromProperty = environment.getProperty(AMLCDDConstants.COUNTRY);
+				String[] countryList = countryFromProperty.split(",");
+				for (String country : countryList) {
+					LOGGER.info("Loading cache data from Database for the Country : " + country);
+					appConfigMap = pickListLkupDao.loadAppConfig(AMLCDDConstants.APP_CONFIG, country);
+					appCountryConfigMap.put(country, appConfigMap);
+					cacheManager.getCache(AMLCDDConstants.APP_CONFIG_CACHE).put(AMLCDDConstants.APP_CONFIG_CACHE,
+							appCountryConfigMap);
+					//cacheManager.getCache(AMLCDDConstants.APP_CONFIG_CACHE).put(AMLCDDConstants.APP_CONFIG_CACHE,appConfigMap);
+					List<String> languageList = new ArrayList<String>();
+					languageList.add(appConfigMap.get(AMLCDDConstants.DEFAULT_LANG).toUpperCase());
+					languageList.add(appConfigMap.get(AMLCDDConstants.SECONDARY_LANG).toUpperCase());
+					for (String language : languageList) {
+						cntryLanguage = CommonUtility.getCountryLanguageKey(country, language);
+						LOGGER.info("Loading cache data from Database for the Country Language : " + cntryLanguage);
+						Map<FormQuestionKeyVO, FormQuestionMapVO> questionCacheMap = formQuestionRenderUtil
+								.loadFormQuestionDetails(language, country);
+						if (null != questionCacheMap && !questionCacheMap.isEmpty()) {
+							langQstCacheMap.put(cntryLanguage, questionCacheMap);
+						}
+						uiLablesMap.put(cntryLanguage, uiLabelsDao.loadCddUiLabels(country, language));
+
+						pickListMap.put(cntryLanguage, pickListLkupDao.loadPickListValueAndCode(country, language));
+
+						LOGGER.info("Loading cache data for RiskSummary" + language);
+						riskSmmryQstCacheMap.put(cntryLanguage, riskSummaryService.loadFormRiskDetails(language, country));
+					}
+				}
+				cacheManager.getCache(AMLCDDConstants.QUESTION_CACHE).put(AMLCDDConstants.QUESTION_CACHE,
+						langQstCacheMap);
+				cacheManager.getCache(AMLCDDConstants.UILABEL_CACHE).put(AMLCDDConstants.UILABEL_CACHE, uiLablesMap);
+				if(countryList != null){
+					LOGGER.info("UI Labels Countries List:" + countryList);
+				}
+				LOGGER.info("UI Labels INFO:" + uiLablesMap);
+				cacheManager.getCache(AMLCDDConstants.PICKLIST_CACHE).put(AMLCDDConstants.PICKLIST_CACHE, pickListMap);
+				cacheManager.getCache(AMLCDDConstants.RISK_SUMMARY_CACHE).put(AMLCDDConstants.RISK_SUMMARY_CACHE, riskSmmryQstCacheMap);
+				if (AMLCDDConstants.LOCAL.equalsIgnoreCase(environmentValue)) {
+					writeFileIntoLocalDisk();
+				}
+			}
+			LOGGER.info("Cacheing completed with total time taken in seconds : "+(System.currentTimeMillis()-startTiming)/1000);
+		} catch (Exception cacheException) {
+			StringBuilder builder = new StringBuilder();
+			StackTraceElement[] trace = cacheException.getStackTrace();
+			for (StackTraceElement traceElement : trace)
+				builder.append("\t " + traceElement + "\n");
+			LOGGER.debug(builder.toString());
+			LOGGER.error("Exception occured in: " + AppInitializer.class + " : " + methodNname + ". Exception Details: "
+					+ cacheException.getLocalizedMessage() + "--" + cacheException.getMessage());
+		}
+	}
+	
+
+	/**
+	 * Read the cached data from File
+	 */
+	private void readCachedDataFromLocalFile() {
+		try {
+			// Questionaire details reading from File for local development
+			fileInputStreemObj = new FileInputStream(questionaireFile);
+			objectInputStreemObj = new ObjectInputStream(fileInputStreemObj);
+			Map<String, Map<FormQuestionKeyVO, FormQuestionMapVO>> langQstCacheMap1 = (Map<String, Map<FormQuestionKeyVO, FormQuestionMapVO>>) objectInputStreemObj
+					.readObject();
+			cacheManager.getCache(AMLCDDConstants.QUESTION_CACHE).put(AMLCDDConstants.QUESTION_CACHE, langQstCacheMap1);
+			closeInputStream();
+
+			// Picklist details reading from File for local development
+			fileInputStreemObj = new FileInputStream(picklistFile);
+			objectInputStreemObj = new ObjectInputStream(fileInputStreemObj);
+			Map<String, Map<String, List<PickListLkUpVO>>> pickListMapLocal = (Map<String, Map<String, List<PickListLkUpVO>>>) objectInputStreemObj
+					.readObject();
+			cacheManager.getCache(AMLCDDConstants.PICKLIST_CACHE).put(AMLCDDConstants.PICKLIST_CACHE, pickListMapLocal);
+			closeInputStream();
+
+			// UI Label details reading from File for local development
+			fileInputStreemObj = new FileInputStream(uiLabelFile);
+			objectInputStreemObj = new ObjectInputStream(fileInputStreemObj);
+			Map<String, Map<String, Map<String, UiLabelVO>>> uiLablesMapLocal = (Map<String, Map<String, Map<String, UiLabelVO>>>) objectInputStreemObj
+					.readObject();
+			cacheManager.getCache(AMLCDDConstants.UILABEL_CACHE).put(AMLCDDConstants.UILABEL_CACHE, uiLablesMapLocal);
+			closeInputStream();
+
+			// App Config details reading from File for local development
+			fileInputStreemObj = new FileInputStream(appConfig);
+			objectInputStreemObj = new ObjectInputStream(fileInputStreemObj);
+			appCountryConfigMap = (Map<String, Map<String, String>>) objectInputStreemObj.readObject();
+			cacheManager.getCache(AMLCDDConstants.APP_CONFIG_CACHE).put(AMLCDDConstants.APP_CONFIG_CACHE,
+					appCountryConfigMap);
+			closeInputStream();
+
+			//Risk summary rcws pick list
+			fileInputStreemObj = new FileInputStream(riskSummaryFile);
+			objectInputStreemObj = new ObjectInputStream(fileInputStreemObj);
+			riskSmmryQstCacheMap = (Map<String, Map<String, Map<String, RiskSummaryVO>>>) objectInputStreemObj.readObject();
+			cacheManager.getCache(AMLCDDConstants.RISK_SUMMARY_CACHE).put(AMLCDDConstants.RISK_SUMMARY_CACHE,
+					riskSmmryQstCacheMap);
+			closeInputStream();
+		} catch (Exception e) {
+			LOGGER.error("Exception is Occured while reading from file");
+		}
+	}
+
+	/**
+	 * Close the input Stream
+	 */
+	private void closeInputStream() {
+		try {
+			fileInputStreemObj.close();
+			objectInputStreemObj.close();
+		} catch (Exception e) {
+			LOGGER.error("Exception is Occured while Closing the InputStream " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Writting the Cached data into file
+	 */
+	private void writeFileIntoLocalDisk() {
+		try {
+			// Appconfig Details writting into file for local development
+			fout = new FileOutputStream(appConfig);
+			objectOut = new ObjectOutputStream(fout);
+			objectOut.writeObject(appCountryConfigMap);
+			objectOut.flush();
+			closeOutputStream();
+
+			// Questionaire Details writting into file for local development
+			fout = new FileOutputStream(questionaireFile);
+			objectOut = new ObjectOutputStream(fout);
+			objectOut.writeObject(langQstCacheMap);
+			objectOut.flush();
+			closeOutputStream();
+
+			// Picklist
+			fout = new FileOutputStream(picklistFile);
+			objectOut = new ObjectOutputStream(fout);
+			objectOut.writeObject(pickListMap);
+			objectOut.flush();
+			closeOutputStream();
+
+			// UI Label Details writting into file for local development
+			fout = new FileOutputStream(uiLabelFile);
+			objectOut = new ObjectOutputStream(fout);
+			objectOut.writeObject(uiLablesMap);
+			objectOut.flush();
+			closeOutputStream();
+
+			fout = new FileOutputStream(riskSummaryFile);
+			objectOut = new ObjectOutputStream(fout);
+			objectOut.writeObject(riskSmmryQstCacheMap);
+			objectOut.flush();
+		} catch (Exception e) {
+			LOGGER.error("Exception is Occured while writting DB Data into file");
+		}
+
+	}
+
+	/**
+	 * Close the Input Stream
+	 */
+	private void closeOutputStream() {
+		try {
+			fout.close();
+			objectOut.close();
+		} catch (Exception e) {
+			LOGGER.error("Exception is Occured while Closing the OutputStream " + e.getMessage());
+		}
+
+	}
+}
