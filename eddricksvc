@@ -1,0 +1,1539 @@
+/*******************************************************************************
+ *ALL RIGHTS RESERVED.  Not for disclosure outside of Citigroup 
+ *and/or its subsidiaries without express prior written authorization.  
+  @ Title : EddServiceImpl.java
+  @ Author    : jr57611
+  @ Created On  : Sep 6, 2017
+  @ Description : Class for EddService Implementation
+ ******************************************************************************/
+
+package com.citigroup.amlcdd.forms.edd.service;
+
+import java.lang.reflect.InvocationTargetException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.beanutils.BeanUtils;
+import org.apache.commons.lang.exception.ExceptionUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.citigroup.amlcdd.common.constants.AMLCDDConstants;
+import com.citigroup.amlcdd.common.constants.EddEnum;
+import com.citigroup.amlcdd.common.constants.SowTypesEnum;
+import com.citigroup.amlcdd.entity.EddDetailsEntity;
+import com.citigroup.amlcdd.entity.EddMemberEntity;
+import com.citigroup.amlcdd.entity.KYCCustomerDetailsEntity;
+import com.citigroup.amlcdd.entity.KycAttachmentEntity;
+import com.citigroup.amlcdd.entity.KycCustomerDetailsIdentEntity;
+import com.citigroup.amlcdd.entity.KycCustomerDetailsIdentPKEntity;
+import com.citigroup.amlcdd.entity.KycEddEntity;
+import com.citigroup.amlcdd.entity.KycEddMapEntity;
+import com.citigroup.amlcdd.entity.KycMainEntity;
+import com.citigroup.amlcdd.entity.KycMemberIdentificationEntity;
+import com.citigroup.amlcdd.entity.KycMemberIdentificationPKEntity;
+import com.citigroup.amlcdd.entity.KycMemberUBODetailsEntity;
+import com.citigroup.amlcdd.entity.KycMemberUBOMapEntity;
+import com.citigroup.amlcdd.entity.KycSourceOfWealthEntity;
+import com.citigroup.amlcdd.forms.cdd.dao.ICddDao;
+import com.citigroup.amlcdd.forms.edd.dao.IEddDao;
+import com.citigroup.amlcdd.forms.edd.vo.EddDetailsVO;
+import com.citigroup.amlcdd.forms.edd.vo.EddMemberVO;
+import com.citigroup.amlcdd.forms.edd.vo.EddVO;
+import com.citigroup.amlcdd.forms.edd.vo.KycEddDetailsVO;
+import com.citigroup.amlcdd.forms.edd.vo.KycEddMapDtlsVO;
+import com.citigroup.amlcdd.forms.sow.service.SowServiceHelper;
+import com.citigroup.amlcdd.forms.spf.service.ISpfAddendumService;
+import com.citigroup.amlcdd.forms.vo.MemberSpfAddendumVO;
+import com.citigroup.amlcdd.framework.service.AmlCddCacheUtil;
+import com.citigroup.amlcdd.framework.util.CommonUtility;
+import com.citigroup.amlcdd.framework.vo.PickListLkUpVO;
+
+@Service("eddService")
+public class EddServiceImpl implements IEddService {
+
+	private final Logger logger = LoggerFactory.getLogger(EddServiceImpl.class);
+	@Autowired
+	private IEddDao eddDao;
+	
+	@Autowired
+	private ICddDao cddDao;
+
+	@Autowired
+	private ISpfAddendumService spfAddendumService;
+
+	@Autowired
+	private SowServiceHelper sowHelper;
+
+	@Autowired
+	private AmlCddCacheUtil amlCddCacheUtil;
+	
+	public static final String COMMA_DELIMITER=",";
+	private static final String LEGAL_ENTITY = "LEGAL_ENTITY";
+	private static final String CLIENT_DUEDIL_DTLS = "CLIENT_DUEDIL_DTLS";
+	private static final String LEGAL_FORM_DOCS = "LEGAL_FORM_DOCS";
+	private static final String NON_BANK_FIN = "NON_BANK_FIN";
+	private static final String CLNT_GOVT_OWN_CONT = "CLNT_GOVT_OWN_CONT";
+	private static final String OWNER_FIVE_YRS = "OWNER_FIVE_YRS";
+	private static final String CLNT_CNTRY_RESTR = "CLNT_CNTRY_RESTR";
+	private static final String ENTITY_ENGAGE = "ENTITY_ENGAGE";
+	private static final String COMP_EXP_DIFF = "COMP_EXP_DIFF";
+	private static final String COMP_DIFF_EXPLAIN = "COMP_DIFF_EXPLAIN";
+	private static final String COUNTRY_PRIMARY_OPS = "COUNTRY_PRIMARY_OPS";
+	private static final String IF_PAID_MTD_OTH = "IF_PAID_MTD_OTH";
+
+	@Override
+	public EddVO getEddDetails(EddVO objEddVO, String language)
+			throws ParseException, IllegalAccessException, InvocationTargetException, SQLException  {
+		logger.info("Inside getEddDetails for CDD " + objEddVO.getCddControlNumber());
+		if (CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.Cards)) {
+			ArrayList<EddMemberEntity> listEddCustomerEntity = eddDao.getEddCustomerDetails(objEddVO);
+			setNatureOfBusiness(listEddCustomerEntity, objEddVO, language);
+			ArrayList<EddMemberEntity> listEddMemberEntity = eddDao.getEddMemberDetails(objEddVO.getCddControlNumber(),
+					objEddVO.getCountry(), objEddVO.getCustNumber(), objEddVO.getClientType());
+			if(listEddMemberEntity != null && listEddMemberEntity.size()>0) {
+				if(listEddCustomerEntity != null && listEddCustomerEntity.size()>0) {
+					listEddCustomerEntity.get(0).setSuppCardExists(AMLCDDConstants.YES);
+				}
+			}
+			else {
+				if(listEddCustomerEntity != null && listEddCustomerEntity.size()>0) {
+					listEddCustomerEntity.get(0).setSuppCardExists(AMLCDDConstants.NO);
+				}
+			}
+			ArrayList<EddMemberEntity> listEddMemberAndCustomerEntity = new ArrayList<EddMemberEntity>();
+			listEddMemberAndCustomerEntity.addAll(listEddCustomerEntity);
+			listEddMemberAndCustomerEntity.addAll(listEddMemberEntity);
+			ArrayList<EddMemberVO> listEddMemberVO = new ArrayList<EddMemberVO>();
+			EddMemberVO objEddMemberVO = null;
+			for (EddMemberEntity objEddMemberEntity : listEddMemberAndCustomerEntity) {
+				objEddMemberVO = new EddMemberVO();
+				BeanUtils.copyProperties(objEddMemberVO, objEddMemberEntity);
+				convertCodeToDesc(objEddMemberVO, objEddVO.getCountry(), language);
+				listEddMemberVO.add(objEddMemberVO);
+				if(objEddMemberEntity.getKycEddDetailsVO()!=null){
+					objEddVO.setObjEddEntityDetailsVO(objEddMemberEntity.getKycEddDetailsVO());
+				}
+			}
+			objEddVO.setListEDDMemberVO(listEddMemberVO);
+			objEddVO.setMemberSize(listEddMemberVO.size());
+			if(AMLCDDConstants.CARDS_ENTITY.equals(objEddVO.getClientType())){
+				List<KycEddMapEntity> dueDiligenceDetails= eddDao.getEddMappingEntityDetails(objEddVO.getCddControlNumber(), objEddVO.getCountry(), objEddVO.getCustNumber());
+				processCardsEntityMappingDetails(dueDiligenceDetails, objEddVO.getObjEddEntityDetailsVO());
+				List<KycAttachmentEntity> attachments=eddDao.getAttachments(objEddVO.getCddControlNumber(),
+						objEddVO.getCountry(), objEddVO.getCustNumber(), AMLCDDConstants.EDD_COMP_ID_CLNTDUEDIL);
+				convertAttachmentEntityToVO(attachments,objEddVO.getObjEddEntityDetailsVO());
+			}
+		}
+		if (CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.RETAIL) 
+				|| CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.MERCHANT)) {
+
+			if(AMLCDDConstants.RETAIL_INDIV.equalsIgnoreCase(objEddVO.getClientType())){
+				EddDetailsEntity objEddDetailsEntity = eddDao.getEddDetails(objEddVO.getCddControlNumber(),
+						objEddVO.getCountry(), objEddVO.getCustNumber());
+				if (objEddDetailsEntity != null) {
+					EddDetailsVO objEddDetailsVO = new EddDetailsVO();
+					BeanUtils.copyProperties(objEddDetailsVO, objEddDetailsEntity);
+					if (CommonUtility.isNotNull(objEddDetailsVO.getRelationshipBalance())) {
+						double relationshipBalance = Double.parseDouble(objEddDetailsVO.getRelationshipBalance());
+						if (relationshipBalance > 1000000) {
+							objEddDetailsVO.setIsHighNetworthCust(AMLCDDConstants.Y);
+						}
+					}
+					objEddVO.setObjEddDetailsVO(objEddDetailsVO);
+					objEddVO.setIsEddDetail(AMLCDDConstants.Y);
+				}
+				List<KycSourceOfWealthEntity> kycSourceOfWealthEntities = eddDao
+						.getEddSowDetails(objEddVO.getCddControlNumber(), objEddVO.getCountry());
+				logger.info("Total Retail Sow types " + kycSourceOfWealthEntities.size());
+				sowHelper.convertEntityToEddSowVO(objEddVO, kycSourceOfWealthEntities);
+			}
+			else{
+			
+				ArrayList<EddMemberEntity> listEddEntityMemberEntity = eddDao.getEddEntityMemberDetails(objEddVO.getCddControlNumber(),
+						objEddVO.getCountry(), objEddVO.getCustNumber());
+				KycMainEntity kycMain = cddDao.getBaseCddDetails(objEddVO.getCddControlNumber(), objEddVO.getCountry());
+				String cddStatus=kycMain.getStatus();
+				
+				ArrayList<String> countryList = eddDao.getHighRiskCountiresList();
+				HashMap <String, String > relTypeMap = eddDao.getRelTypePickListValues();
+				HashMap <String, String > asscnTypeMap = eddDao.getAsscnTypePickListValues();
+				Map<String, String> uboMap = getMemberUBODtls(listEddEntityMemberEntity, countryList,cddStatus) ;
+				ArrayList<EddMemberVO> listEddMemberVO = new ArrayList<EddMemberVO>();
+				EddMemberVO objEddMemberVO = null;
+				for (EddMemberEntity objEddMemberEntity : listEddEntityMemberEntity) {
+					objEddMemberVO = new EddMemberVO();
+					BeanUtils.copyProperties(objEddMemberVO, objEddMemberEntity);
+					setRelAndAsscnTypeValues(objEddMemberVO, relTypeMap , asscnTypeMap);
+					if(uboMap != null){
+					objEddMemberVO.setIsUBO(uboMap.get(objEddMemberVO.getMemberId()));
+					objEddMemberVO.setCorrobWealthSrcTypes(Arrays.stream(objEddMemberVO.getCorrobWealthSrc().split(",")).map(String::trim).toArray(String[]::new));
+					objEddMemberVO.setExistingCorrobSrcWealth(Arrays.stream(objEddMemberVO.getCorrobWealthSrc().split(",")).map(String::trim).toArray(String[]::new));
+					objEddMemberVO.setExistingCorrobSrcWealthList(CommonUtility.convertStringToArrayList(objEddMemberVO.getCorrobWealthSrc()));
+					
+					objEddMemberVO.setSourceOfWealthTypes(Arrays.stream(objEddMemberVO.getSourceOfWealth().split(",")).map(String::trim).toArray(String[]::new));
+					objEddMemberVO.setExistingSourceOfWealth(Arrays.stream(objEddMemberVO.getSourceOfWealth().split(",")).map(String::trim).toArray(String[]::new));
+					
+					List<PickListLkUpVO> lstPickListLkUpVO = amlCddCacheUtil.getPickListData(objEddVO.getCountry(), language,AMLCDDConstants.ISO_COUNTRY_LKUP);
+					if(lstPickListLkUpVO != null) {
+							String dbCntryOfResidence = objEddMemberEntity.getCntryResidence();
+							String actualCntryOfResidence = objEddMemberEntity.getCntryResidence();
+							for(PickListLkUpVO pickListLkUpVO : lstPickListLkUpVO) {
+								if(pickListLkUpVO.getCode().equals(dbCntryOfResidence)) {
+									actualCntryOfResidence = pickListLkUpVO.getPickListDesc();
+								}
+							}
+							objEddMemberVO.setCntryResidence(actualCntryOfResidence);
+						}
+					}
+					listEddMemberVO.add(objEddMemberVO);
+				}
+				objEddVO.setListEDDMemberVO(listEddMemberVO);
+				objEddVO.setMemberSize(listEddMemberVO.size());
+				
+				
+				KycEddEntity existingKycEddEntity=eddDao.
+						getAllEddDetails(objEddVO.getCddControlNumber(), objEddVO.getCountry(), objEddVO.getCustNumber());
+				
+				KycEddDetailsVO kycEddDetailsVO=new KycEddDetailsVO();
+				if(existingKycEddEntity!=null){
+				BeanUtils.copyProperties(kycEddDetailsVO, existingKycEddEntity);
+				/*BigDecimal annualBusinessRevenu=eddDao.getBusinessRevnue(objEddVO.getCddControlNumber(), objEddVO.getCountry(), objEddVO.getCustNumber());
+				if(null !=annualBusinessRevenu){
+					kycEddDetailsVO.setAnnlBussRevenue(annualBusinessRevenu.toString());
+				}
+				kycEddDetailsVO.setAnnlBussRevenueCode(annualBusinessRevenu==null?null:getAnnualRevenueValue(annualBusinessRevenu.setScale(0,RoundingMode.CEILING).intValue()));*/
+				kycEddDetailsVO.setPriPlaceOfBuss(existingKycEddEntity.getPriPlaceOfBuss()==null?"":existingKycEddEntity.getPriPlaceOfBuss().toString());
+				kycEddDetailsVO.setPctPublicShares(existingKycEddEntity.getPctPublicShares()==null?"":existingKycEddEntity.getPctPublicShares().toString());
+				kycEddDetailsVO.setNoOfLocation(existingKycEddEntity.getNoOfLocation()==null?"":existingKycEddEntity.getNoOfLocation().toString());
+				kycEddDetailsVO.setSeedMoneyAmt(existingKycEddEntity.getSeedMoneyAmt()==null?"":existingKycEddEntity.getSeedMoneyAmt().toString());
+				kycEddDetailsVO.setSeeMoneyTiming(existingKycEddEntity.getSeeMoneyTiming()==null?"":existingKycEddEntity.getSeeMoneyTiming());
+				kycEddDetailsVO.setSigRevTiming(existingKycEddEntity.getSigRevTiming()==null?"":existingKycEddEntity.getSigRevTiming());
+				kycEddDetailsVO.setMgmtRespContactDate(existingKycEddEntity.getMgmtRespContactDate()==null?"":CommonUtility.getFormatedDate(existingKycEddEntity.getMgmtRespContactDate()));
+				kycEddDetailsVO.setDateOfVisit(existingKycEddEntity.getDateOfVisit()==null?"":CommonUtility.getFormatedDate(existingKycEddEntity.getDateOfVisit()));
+				kycEddDetailsVO.setPriBusiPlaces(CommonUtility.convertStringToArrayList(existingKycEddEntity.getPriPlaceOfBuss(),"~"));
+				
+				if(existingKycEddEntity.getPriPlaceOfBuss()!=null){
+				kycEddDetailsVO.setCountriesOfPrimOpers(Arrays.stream(existingKycEddEntity.getPriPlaceOfBuss().split("~")).map(String::trim).toArray(String[]::new)/*(String[])kycEddDetailsVO.getPriBusiPlaces().toArray()*/);
+				}
+				
+				}
+				
+				BigDecimal annualBusinessRevenu=eddDao.getBusinessRevnue(objEddVO.getCddControlNumber(), objEddVO.getCountry(), objEddVO.getCustNumber());
+				if(null !=annualBusinessRevenu){
+					kycEddDetailsVO.setAnnlBussRevenue(annualBusinessRevenu.toString());
+					kycEddDetailsVO.setAnnlBussRevenueCode(annualBusinessRevenu==null?null:getAnnualRevenueValue(annualBusinessRevenu.setScale(0,RoundingMode.CEILING).intValue()));
+				}else{
+					kycEddDetailsVO.setAnnlBussRevenue("");
+				}
+				
+				List<KycEddMapEntity> kycEddEntityList= eddDao.getEddMappingEntityDetails(objEddVO.getCddControlNumber(),
+						objEddVO.getCountry(), objEddVO.getCustNumber());
+				
+				processEddEntityMappingDetails(kycEddEntityList,kycEddDetailsVO);
+				List<KycAttachmentEntity> attachments=eddDao.getAttachments(objEddVO.getCddControlNumber(),
+						objEddVO.getCountry(), objEddVO.getCustNumber(), AMLCDDConstants.EDD_COMP_ID_CLNTWEB);
+				convertAttachmentEntityToVO(attachments,kycEddDetailsVO);
+				
+				objEddVO.setObjEddEntityDetailsVO(kycEddDetailsVO);
+				eddDao.getNonFormDetails(objEddVO);
+				
+			}
+
+		}
+		logger.info("Exit getEddDetails for CDD " + objEddVO.getCddControlNumber());
+		return objEddVO;
+	}
+
+	
+	private String getAnnualRevenueValue(Integer annualValue) {
+		String annualRevCode="";
+		if(annualValue!=null){
+			if( annualValue<100000000){
+				annualRevCode=EddEnum.LESSER_THAN_1M.getValue();
+			}else if( annualValue>=100000000 && annualValue<=500000000){
+				annualRevCode=EddEnum.BTW_1M_5M.getValue();
+			}
+			else if( annualValue>500000000 && annualValue<=1000000000){
+				annualRevCode=EddEnum.BTW_5M_1B.getValue();
+			}
+			else if( annualValue>1000000000){
+				annualRevCode=EddEnum.GREATER_THAN_1B.getValue();
+			}
+		}
+		return annualRevCode;
+	}
+
+	/**
+	 * Method Name: setNatureOfBusiness 
+	 * Description: Method to set Nature of Business description from pick list
+	 * 
+	 * @param listEddCustomerEntity
+	 * @param objEddVO
+	 */
+	private void setNatureOfBusiness(ArrayList<EddMemberEntity> eddMemberList, EddVO objEddVO, String language){
+		if(AMLCDDConstants.CARDS_ENTITY.equals(objEddVO.getClientType())){
+			for(EddMemberEntity eddMember : eddMemberList){
+				KycEddDetailsVO eddDetail = eddMember.getKycEddDetailsVO();
+				if(eddDetail!=null && CommonUtility.isNotNull(eddDetail.getNatureOfBusiness())){
+					List<PickListLkUpVO> bizNatureList = amlCddCacheUtil.getPickListData(objEddVO.getCountry(), language, AMLCDDConstants.NATURE_OF_BUSINESS);
+					if(bizNatureList!=null && bizNatureList.size()>0){
+						PickListLkUpVO pickListVO = bizNatureList.stream().filter(bizNature -> eddDetail.getNatureOfBusiness().equals(bizNature.getCode())).findAny().orElse(null);
+						if(pickListVO!=null){
+							eddDetail.setNatureOfBusiness(pickListVO.getPickListDesc());
+							eddMember.setKycEddDetailsVO(eddDetail);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	private void convertAttachmentEntityToVO(List<KycAttachmentEntity> attachments, KycEddDetailsVO kycEddDetailsVO) {
+		if(attachments!=null && !attachments.isEmpty() && attachments.size()>0){
+			for (KycAttachmentEntity kycAttachmentEntity : attachments) {
+				
+				
+				if(AMLCDDConstants.EDD_COMP_ID_CLNTWEB.equalsIgnoreCase(kycAttachmentEntity.getComponentId())){
+				kycEddDetailsVO.setClntWebContAttchId(kycAttachmentEntity.getAtchId());
+				kycEddDetailsVO.setClntWebContAttchNm(kycAttachmentEntity.getAtchNm());
+				kycEddDetailsVO.setClntWebContCmptId(kycAttachmentEntity.getComponentId());
+				
+				kycEddDetailsVO.setAttachmentId(kycAttachmentEntity.getAtchId());
+				kycEddDetailsVO.setAttachmentName(kycAttachmentEntity.getAtchNm());
+				kycEddDetailsVO.setClntWebContCmptId(kycAttachmentEntity.getComponentId());
+				}
+				else if(AMLCDDConstants.EDD_COMP_ID_CLNTDUEDIL.equalsIgnoreCase(kycAttachmentEntity.getComponentId())){
+					kycEddDetailsVO.setCltDueDilAttchId(kycAttachmentEntity.getAtchId());
+					kycEddDetailsVO.setCltDueDilAttchNm(kycAttachmentEntity.getAtchNm());
+					kycEddDetailsVO.setCltDueDilCmptId(kycAttachmentEntity.getComponentId());
+				}
+			}
+		}
+	}
+
+
+	private void processEddEntityMappingDetails(List<KycEddMapEntity> kycEddEntityList,
+			KycEddDetailsVO kycEddDetailsVO) {
+		String[] countriesPrimOps = new String[5];
+	List<String> countriesPrimOpsLbqIds = new ArrayList<String>();
+	int index=0;
+		if(kycEddEntityList!=null && !kycEddEntityList.isEmpty() && kycEddEntityList.size()>0){
+			for (KycEddMapEntity kycEddMapEntity : kycEddEntityList) {
+				switch (kycEddMapEntity.getMapType()) {
+				case COUNTRY_PRIMARY_OPS:
+					if(index<5){
+					countriesPrimOpsLbqIds.add(kycEddMapEntity.getLbqMapId());
+					countriesPrimOps[index]=kycEddMapEntity.getMapVal();
+					}
+					index++;
+					break;
+				case LEGAL_ENTITY:
+					kycEddDetailsVO.setLegalEntities(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setLegalEntitiesLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setLegalEntitiesVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case LEGAL_FORM_DOCS:
+					kycEddDetailsVO.setNoLegalDocs(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setNoLegalDocList(CommonUtility.convertStringToArrayList(kycEddMapEntity.getMapVal(),"~"));
+					kycEddDetailsVO.setNoLegalDocsLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setNoLegalDocsVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case NON_BANK_FIN:
+					kycEddDetailsVO.setNonBankingFinclInst(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setNonBankingFinclInstLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setNonBankingFinclInstVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case CLNT_GOVT_OWN_CONT:
+					kycEddDetailsVO.setClnGovtOwnOrCtrl(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setClnGovtOwnOrCtrlLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setClnGovtOwnOrCtrlVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case OWNER_FIVE_YRS:
+					kycEddDetailsVO.setSameOwnerShipFiveYrs(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setSameOwnerShipFiveYrsLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setSameOwnerShipFiveYrsVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case CLNT_CNTRY_RESTR:
+					kycEddDetailsVO.setClntInCntryRestricted(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setClntInCntryRestrictedLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setClntInCntryRestrictedVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case ENTITY_ENGAGE:
+					kycEddDetailsVO.setEntityEngaged(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setEntityEngagedList(CommonUtility.convertStringToArrayList(kycEddMapEntity.getMapVal(),"~"));
+					kycEddDetailsVO.setEntityEngagedLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setEntityEngagedVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case COMP_EXP_DIFF:
+					kycEddDetailsVO.setCompantExpDifficulties(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setCompantExpDifficultiesLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setCompantExpDifficultiesVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case COMP_DIFF_EXPLAIN:
+					kycEddDetailsVO.setCompanyDiffExplain(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setCompanyDiffExplainLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setCompanyDiffExplainVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				case IF_PAID_MTD_OTH:
+					kycEddDetailsVO.setCustomerPaidOther(kycEddMapEntity.getMapVal());
+					kycEddDetailsVO.setCustomerPaidOtherLbqId(kycEddMapEntity.getLbqMapId());
+					kycEddDetailsVO.setCustomerPaidOtherVerNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+					break;
+				default:
+					break;
+				}
+			}
+			if(countriesPrimOps != null && countriesPrimOps.length > 0){
+				boolean allEmpty = false;
+				for(String countryOfPrimaryOpss : countriesPrimOps){
+					if(countryOfPrimaryOpss != null && !"".equals(countryOfPrimaryOpss)){
+						allEmpty = true;
+					}
+				}
+				if(!allEmpty){
+					countriesPrimOps = new String[0];
+				}
+				kycEddDetailsVO.setCountriesOfPrimOpers(countriesPrimOps);
+				kycEddDetailsVO.setExitingCountriesOps(countriesPrimOps==null?new String[0]:countriesPrimOps);
+			}
+			if((kycEddDetailsVO.getCustomerPaidOther()==null || CommonUtility.isEmptyString(kycEddDetailsVO.getCustomerPaidOther())) && (kycEddDetailsVO.getCustomerPaidOtherLbqId()==null || !CommonUtility.isEmptyString(kycEddDetailsVO.getCustomerPaidOtherLbqId()))){
+				kycEddDetailsVO.setCustomerPaidOtherLbqId("");
+				kycEddDetailsVO.setCustomerPaidOtherVerNum("");
+			}
+		}
+		
+	}
+	
+	private void processCardsEntityMappingDetails(List<KycEddMapEntity> kycEddEntityList,
+			KycEddDetailsVO kycEddDetailsVO) {
+		String[] countriesPrimOps = new String[5];
+		List<String> countriesPrimOpsLbqIds = new ArrayList<String>();
+		int index=0;
+		if(kycEddEntityList!=null && !kycEddEntityList.isEmpty() && kycEddEntityList.size()>0){
+			for (KycEddMapEntity kycEddMapEntity : kycEddEntityList) {
+				switch (kycEddMapEntity.getMapType()) {
+					case CLIENT_DUEDIL_DTLS:
+						kycEddDetailsVO.setDueDiligenceDtls(kycEddMapEntity.getMapVal());
+						kycEddDetailsVO.setDueDiligenceLbqId(kycEddMapEntity.getLbqMapId());
+						kycEddDetailsVO.setDueDiligenceVersionNum(kycEddMapEntity.getVerNum()==null?"":kycEddMapEntity.getVerNum().toString());
+						break;
+					case COUNTRY_PRIMARY_OPS:
+						if(index<5){
+							countriesPrimOpsLbqIds.add(kycEddMapEntity.getLbqMapId());
+							if(kycEddMapEntity.getMapVal() != null){
+								countriesPrimOps[index]=kycEddMapEntity.getMapVal();
+							}
+						}
+						index++;
+						break;
+					default:
+						break;
+				}
+			}
+			if(countriesPrimOps != null && countriesPrimOps.length > 0){
+				boolean allEmpty = false;
+				for(String countryOfPrimaryOpss : countriesPrimOps){
+					if(countryOfPrimaryOpss != null && !"".equals(countryOfPrimaryOpss)){
+						allEmpty = true;
+					}
+				}
+				if(!allEmpty){
+					countriesPrimOps = new String[0];
+				}
+				kycEddDetailsVO.setCountriesOfPrimOpers(countriesPrimOps);
+				kycEddDetailsVO.setExitingCountriesOps(countriesPrimOps==null?new String[0]:countriesPrimOps);
+			}
+			kycEddDetailsVO.setCountriesPrimOpsLbqIds(countriesPrimOpsLbqIds);
+		}
+		
+	}
+
+	
+
+	/*
+	 * @Override
+	 * 
+	 * @Transactional(propagation=Propagation.REQUIRES_NEW)
+	 */
+	public void saveEddDetails(EddVO objEddVO, String country,String language)
+			throws ParseException, IllegalAccessException, InvocationTargetException/*, InstantiationException, NoSuchMethodException*/ {
+		if (CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.Cards)) {
+			ArrayList<EddMemberVO> eddMemberVOList = objEddVO.getListEDDMemberVO();
+			for (EddMemberVO eddMemberVO : eddMemberVOList) {
+				if(AMLCDDConstants.CLIENT.equals(eddMemberVO.getMemberRole())) {
+					converVotoEddCustomerIdEntity(objEddVO,
+							eddMemberVO);
+	eddDao.updateEddCustomerDetailsIdentFields(objEddVO,
+								eddMemberVO);
+					eddDao.updateEddCustomerDetails(objEddVO,
+							eddMemberVO);
+					if(AMLCDDConstants.CARDS_ENTITY.equalsIgnoreCase(objEddVO.getClientType())){
+						
+						KycEddEntity existingKycEddEntity=new KycEddEntity();
+						setCommonEddEntityDtls(objEddVO, existingKycEddEntity);  
+						KycEddDetailsVO kycEddDetailsVO=objEddVO.getObjEddEntityDetailsVO();
+						if(kycEddDetailsVO!=null){
+							if(kycEddDetailsVO.getDueDiligenceDtls()!=null){
+								saveorUpdateDueDiligenceDtls(objEddVO, kycEddDetailsVO);
+							}
+							List<String> countOPSList=Arrays.asList(kycEddDetailsVO.getCountriesOfPrimOpers());
+							String [] exitingSOWArr=kycEddDetailsVO.getExitingCountriesOps();
+							List<String> existOPSList=new ArrayList<String>();
+							existOPSList=CommonUtility.convertStringToArrayList(exitingSOWArr[0]);
+							List<String> deleteCorrobDocs=new ArrayList<>();
+							if(existOPSList!=null && existOPSList.size()>0){
+
+								for (String corrobDoc : existOPSList) {
+									if(countOPSList!=null && !countOPSList.isEmpty()){
+										if(!countOPSList.contains(corrobDoc)){
+										deleteCorrobDocs.add(corrobDoc);
+										}
+									}
+									else{
+										deleteCorrobDocs.addAll(existOPSList);
+									}
+								}
+								if(deleteCorrobDocs!=null && deleteCorrobDocs.size()>0){
+									eddDao.deleteEddmappingDetailsByMapType(objEddVO,COUNTRY_PRIMARY_OPS,deleteCorrobDocs);
+								}
+							}
+							if(countOPSList!=null && countOPSList.size()>0){
+							for (String countryprmOps : countOPSList) {
+								if(existOPSList!=null && !existOPSList.isEmpty() ){
+									if(!existOPSList.contains(countryprmOps)){
+										KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+										kycEddMapEntity.setMapType(COUNTRY_PRIMARY_OPS);
+										kycEddMapEntity.setMapVal(countryprmOps);
+										saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+
+									}
+								}else{
+									KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+									kycEddMapEntity.setMapType(COUNTRY_PRIMARY_OPS);
+									kycEddMapEntity.setMapVal(countryprmOps);
+									saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+
+								}
+							}
+					}
+
+
+						}
+					}
+				} 
+				else if((AMLCDDConstants.CARDS_INDIV.equalsIgnoreCase(objEddVO.getClientType()) && AMLCDDConstants.SUPPLEMENTARY.equals(eddMemberVO.getMemberRole())) ||
+						(AMLCDDConstants.CARDS_ENTITY.equalsIgnoreCase(objEddVO.getClientType()) && !eddMemberVO.getMemberRole().contains(AMLCDDConstants.SUPPLEMENTARY)
+								&&  !AMLCDDConstants.CLIENT.equals(eddMemberVO.getMemberRole()))) {
+					converVotoEddMemberIdEntity(objEddVO,
+							eddMemberVO);
+							eddDao.updateEddMemberDetailsIdentFields(objEddVO,
+								eddMemberVO);
+					eddDao.updateEddMemberDetails(objEddVO,
+							eddMemberVO);
+				}
+				logger.info("EDD member details saved for control number " + objEddVO.getCddControlNumber());
+			}
+		}
+		if (CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.RETAIL) 
+				|| CommonUtility.isNotNull(objEddVO.getBusinessLine())
+				&& objEddVO.getBusinessLine().equalsIgnoreCase(AMLCDDConstants.MERCHANT)) {
+
+			
+			if(AMLCDDConstants.RETAIL_INDIV.equalsIgnoreCase(objEddVO.getClientType())){
+				if (CommonUtility.isNotNull(objEddVO.getObjEddDetailsVO().getOtherEmploymentType())) {
+					eddDao.saveOtherEmploymentFieldCustomerDetailsEntity(objEddVO);
+					logger.info(
+							"EDD Other employment type details saved for control number " + objEddVO.getCddControlNumber());
+				}
+				try {
+					KycEddEntity kycEddEntity = converVotoEddEntity(objEddVO,null/*existingKycEddEntity*/);
+					eddDao.saveEddDetails(kycEddEntity, objEddVO);
+					eddDao.saveCustomerDetailsEntity(objEddVO);
+				} catch (InstantiationException | NoSuchMethodException e) {
+					logger.error("EDD details saved for control number " + e.getMessage());
+				}
+				
+				logger.info("EDD details saved for control number " + objEddVO.getCddControlNumber());
+				if (CommonUtility.isNotNull(objEddVO.getObjEddDetailsVO().getIsSPF())) {
+					if (objEddVO.getObjEddDetailsVO().getIsSPF().equalsIgnoreCase(AMLCDDConstants.Y)
+							&& objEddVO.getObjEddDetailsVO().getIsHighNetworthCust().equalsIgnoreCase(AMLCDDConstants.Y)) {
+						MemberSpfAddendumVO memberSpfAddendumVO = converEDDSowCollabtoSPFAdden(objEddVO);
+
+						spfAddendumService.saveOrUpdateSpfAddendum(memberSpfAddendumVO);
+						logger.info("EDD SOW corroboration - SPF addendum details saved for control number "
+								+ objEddVO.getCddControlNumber());
+					}
+				}
+				setSowTypes(objEddVO);
+				List<KycSourceOfWealthEntity> KycSourceOfWealthEntities = sowHelper.convertEddSowVOToEntity(objEddVO,country,language);
+				for (KycSourceOfWealthEntity kycSourceOfWealthEntity : KycSourceOfWealthEntities) {
+					eddDao.saveSowDetails(kycSourceOfWealthEntity);
+				}
+			}
+			else{
+				logger.info("Inside Edd Service Save Entity  " + objEddVO.getCddControlNumber());
+				if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+				logger.info("Inside apacConversionVotoEddEntity for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+				}
+				KycEddEntity kycEddEntity=new KycEddEntity();
+				 kycEddEntity = apacConversionVotoEddEntity(objEddVO,kycEddEntity);
+				 logger.info("Inside Edd Service After conversion Entity  " + objEddVO.getCddControlNumber());
+					if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+					logger.info("Inside apacConversionVotoEddEntity for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+				if(kycEddEntity!=null){
+					logger.info("Inside apacConversionVotoEddEntity for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +kycEddEntity.getClientAmlProgram());
+				}
+					}
+				
+			
+				kycEddEntity.setControlNbr(objEddVO.getCddControlNumber());
+				kycEddEntity.setCustomerNbr(objEddVO.getCustNumber());
+				kycEddEntity.setCntryCde(objEddVO.getCountry());
+				if (CommonUtility.isNotNull(objEddVO.getObjEddEntityDetailsVO().getVerNum())) {
+					kycEddEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+					kycEddEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+					kycEddEntity.setVerNum(Long.parseLong(objEddVO.getObjEddEntityDetailsVO().getVerNum()));
+					logger.info("Inside Edd Service before update Entity  " + objEddVO.getCddControlNumber());
+					if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+					logger.info("Inside version Check for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+					}
+					eddDao.updateEddDetails(kycEddEntity,objEddVO);
+					
+					logger.info("Inside Edd Service after update Entity  " + objEddVO.getCddControlNumber());
+					if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+					logger.info("Inside version Check for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+					}
+				} else {
+					kycEddEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+					kycEddEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+					kycEddEntity.setVerNum(AMLCDDConstants.ONE);
+					logger.info("Inside Edd Service before Save Entity  " + objEddVO.getCddControlNumber());
+					if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+					logger.info("Inside apacConversionVotoEddEntity for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+					}
+					eddDao.saveEddDetails(kycEddEntity,objEddVO);
+					
+					logger.info("Inside Edd Service After Save Entity  " + objEddVO.getCddControlNumber());
+					if(objEddVO!=null && objEddVO.getObjEddEntityDetailsVO()!=null ){
+					logger.info("Inside apacConversionVotoEddEntity for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +objEddVO.getObjEddEntityDetailsVO().getClientAmlProgram());
+					}
+				}
+
+				KycMemberUBODetailsEntity kycMemberUBODetailsEntity = null;
+				for(EddMemberVO  eddMemberVO: objEddVO.getListEDDMemberVO()){
+					kycMemberUBODetailsEntity = new KycMemberUBODetailsEntity();
+					if(eddMemberVO.getIsUBO()!=null && AMLCDDConstants.Y.equalsIgnoreCase(eddMemberVO.getIsUBO())){
+						if (CommonUtility.isNotNull(eddMemberVO.getMemberUBOId()) && CommonUtility.isNotNull(eddMemberVO.getMemberUboVerNum()) 
+								&& (Long.parseLong(eddMemberVO.getMemberUboVerNum())>=1)) {
+							kycMemberUBODetailsEntity.setMemberUBOID(eddMemberVO.getMemberUBOId());
+							kycMemberUBODetailsEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+							kycMemberUBODetailsEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+							kycMemberUBODetailsEntity.setVerNum(Long.parseLong(eddMemberVO.getMemberUboVerNum()));
+						} else {
+							kycMemberUBODetailsEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+							kycMemberUBODetailsEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+							kycMemberUBODetailsEntity.setVerNum(AMLCDDConstants.ONE);
+						} 
+					kycMemberUBODetailsEntity.setControlNbr(objEddVO.getCddControlNumber());
+					convertEDDRetailMemberToEntity(eddMemberVO, kycMemberUBODetailsEntity);
+					eddDao.saveEddRetailEntityUBO(kycMemberUBODetailsEntity);
+					
+					
+					// Save UBO mapping details
+						
+						List<String> corrobTypesList=Arrays.asList(eddMemberVO.getCorrobWealthSrcTypes());
+						String [] exitingArr=eddMemberVO.getExistingCorrobSrcWealth();
+						List<String> existCorrobTypesList=new ArrayList<String>();
+						existCorrobTypesList=CommonUtility.convertStringToArrayList(exitingArr[0]);
+						saveUboMappingDetails(eddMemberVO, corrobTypesList, existCorrobTypesList,AMLCDDConstants.CORROB_DOC_TYPE);
+						
+						List<String> sowTypesList=Arrays.asList(eddMemberVO.getSourceOfWealthTypes());
+						String [] exitingSOWArr=eddMemberVO.getExistingSourceOfWealth();
+						List<String> existSOWList=new ArrayList<String>();
+						existSOWList=CommonUtility.convertStringToArrayList(exitingSOWArr[0]);
+						saveUboMappingDetails(eddMemberVO, sowTypesList, existSOWList,AMLCDDConstants.SOW);
+
+					}
+				}
+				
+				saveEddEntityMappingDetails(objEddVO);
+
+			}
+
+		}
+	}
+
+
+	private void saveUboMappingDetails(EddMemberVO eddMemberVO, List<String> corrobTypesList,
+			List<String> existCorrobTypesList,String mapType) {
+		List<String> deleteCorrobDocs=new ArrayList<>();
+		if(existCorrobTypesList!=null && existCorrobTypesList.size()>0){
+
+			for (String corrobDoc : existCorrobTypesList) {
+				if(corrobTypesList!=null && !corrobTypesList.isEmpty()){
+					if(!corrobTypesList.contains(corrobDoc)){
+					deleteCorrobDocs.add(corrobDoc);
+					}
+				}
+				else{
+					deleteCorrobDocs.addAll(existCorrobTypesList);
+				}
+			}
+			if(deleteCorrobDocs!=null && deleteCorrobDocs.size()>0){
+				eddDao.deleteEddUBOMappingByMapType(eddMemberVO.getMemberUBOId(),deleteCorrobDocs,mapType);
+			}
+		}
+		if(corrobTypesList!=null && corrobTypesList.size()>0){
+		for (String corrobDocType : corrobTypesList) {
+			KycMemberUBOMapEntity kycMemberUBOEntity=new KycMemberUBOMapEntity();
+			if(existCorrobTypesList!=null && !existCorrobTypesList.isEmpty() ){
+				if(!existCorrobTypesList.contains(corrobDocType)){
+				kycMemberUBOEntity.setMapVal(corrobDocType);
+				kycMemberUBOEntity.setMapType(mapType);
+				convertEDDRetailMemberUBOToEntity(eddMemberVO, kycMemberUBOEntity);
+				eddDao.saveEddEntityUBOMapping(kycMemberUBOEntity);
+				}
+			}else{
+				kycMemberUBOEntity.setMapVal(corrobDocType);
+				kycMemberUBOEntity.setMapType(mapType);
+				convertEDDRetailMemberUBOToEntity(eddMemberVO, kycMemberUBOEntity);
+				eddDao.saveEddEntityUBOMapping(kycMemberUBOEntity);
+			}
+		}
+}
+	}
+	
+
+	
+	private List<KycEddMapDtlsVO> saveEddEntityMappingDetails(EddVO objEddVO) throws IllegalAccessException,
+					InvocationTargetException{
+		
+		KycEddDetailsVO kycEddDetailsVO=objEddVO.getObjEddEntityDetailsVO();
+		if(kycEddDetailsVO!=null){
+			List<String> countOPSList=Arrays.asList(kycEddDetailsVO.getCountriesOfPrimOpers());
+			String [] exitingSOWArr=kycEddDetailsVO.getExitingCountriesOps();
+			List<String> existOPSList=new ArrayList<String>();
+			existOPSList=CommonUtility.convertStringToArrayList(exitingSOWArr[0]);
+			List<String> deleteCorrobDocs=new ArrayList<>();
+			if(existOPSList!=null && existOPSList.size()>0){
+
+				for (String corrobDoc : existOPSList) {
+					if(countOPSList!=null && !countOPSList.isEmpty()){
+						if(!countOPSList.contains(corrobDoc)){
+						deleteCorrobDocs.add(corrobDoc);
+						}
+					}
+					else{
+						deleteCorrobDocs.addAll(existOPSList);
+					}
+				}
+				if(deleteCorrobDocs!=null && deleteCorrobDocs.size()>0){
+					eddDao.deleteEddmappingDetailsByMapType(objEddVO,COUNTRY_PRIMARY_OPS,deleteCorrobDocs);
+				}
+			}
+			if(countOPSList!=null && countOPSList.size()>0){
+			for (String countryprmOps : countOPSList) {
+				if(existOPSList!=null && !existOPSList.isEmpty() ){
+					if(!existOPSList.contains(countryprmOps)){
+						KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+						kycEddMapEntity.setMapType(COUNTRY_PRIMARY_OPS);
+						kycEddMapEntity.setMapVal(countryprmOps);
+						saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+
+					}
+				}else{
+					KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+					kycEddMapEntity.setMapType(COUNTRY_PRIMARY_OPS);
+					kycEddMapEntity.setMapVal(countryprmOps);
+					saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+
+				}
+			}
+	}
+
+		if(kycEddDetailsVO.getLegalEntities()!=null){
+			
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(LEGAL_ENTITY);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getLegalEntities());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getLegalEntitiesLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getLegalEntitiesVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getLegalEntitiesVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+			
+		}
+		if(kycEddDetailsVO.getNoLegalDocs()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(LEGAL_FORM_DOCS);
+			if(kycEddDetailsVO.getNoLegalDocs().length()>0 &&"~".equalsIgnoreCase(kycEddDetailsVO.getNoLegalDocs().substring(0,1))){
+				kycEddDetailsVO.getNoLegalDocs().replace("~", "");
+				kycEddDetailsVO.getNoLegalDocs().replaceFirst("~", "");
+				kycEddDetailsVO.getNoLegalDocs().substring(0,1).replace("~", "");
+			}
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getNoLegalDocs());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getNoLegalDocsLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getNoLegalDocsVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getNoLegalDocsVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getNonBankingFinclInst()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(NON_BANK_FIN);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getNonBankingFinclInst());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getNonBankingFinclInstLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getNonBankingFinclInstVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getNonBankingFinclInstVerNum()));
+			}
+			
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getEntityEngaged()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(ENTITY_ENGAGE);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getEntityEngaged());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getEntityEngagedLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getEntityEngagedVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getEntityEngagedVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getClnGovtOwnOrCtrl()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(CLNT_GOVT_OWN_CONT);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getClnGovtOwnOrCtrl());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getClnGovtOwnOrCtrlLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getClnGovtOwnOrCtrlVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getClnGovtOwnOrCtrlVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getSameOwnerShipFiveYrs()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(OWNER_FIVE_YRS);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getSameOwnerShipFiveYrs());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getSameOwnerShipFiveYrsLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getSameOwnerShipFiveYrsVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getSameOwnerShipFiveYrsVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getClntInCntryRestricted()!=null ){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(CLNT_CNTRY_RESTR);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getClntInCntryRestricted());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getClntInCntryRestrictedLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getClntInCntryRestrictedVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getClntInCntryRestrictedVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getCompantExpDifficulties()!=null){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(COMP_EXP_DIFF);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getCompantExpDifficulties());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getCompantExpDifficultiesLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getCompantExpDifficultiesVerNum())){
+				kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getCompantExpDifficultiesVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getCompanyDiffExplain()!=null){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(COMP_DIFF_EXPLAIN);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getCompanyDiffExplain());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getCompanyDiffExplainLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getCompanyDiffExplainVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getCompanyDiffExplainVerNum()));
+			}
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+		}
+		if(kycEddDetailsVO.getCustomerPaidOther()!=null){
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			kycEddMapEntity.setMapType(IF_PAID_MTD_OTH);
+			kycEddMapEntity.setMapVal(kycEddDetailsVO.getCustomerPaidOther());
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getCustomerPaidOtherLbqId());
+			if(CommonUtility.isNotNull(kycEddDetailsVO.getCustomerPaidOtherVerNum())){
+			kycEddMapEntity.setVerNum(Long.parseLong(kycEddDetailsVO.getCustomerPaidOtherVerNum()));
+			}
+			if(CommonUtility.isEmptyString(kycEddDetailsVO.getCustomerPaidOther()) && !CommonUtility.isEmptyString(kycEddDetailsVO.getCustomerPaidOtherLbqId())){
+				List<String> deletId=new ArrayList();
+				deletId.add(kycEddDetailsVO.getCustomerPaidOtherLbqId());
+				eddDao.deleteEddmappingDetails(deletId);
+				kycEddDetailsVO.setCustomerPaidOtherLbqId("");
+				kycEddDetailsVO.setCustomerPaidOtherVerNum("");
+			}
+			else {
+			saveorUpdateEddMappingDtls(objEddVO, kycEddMapEntity);
+			}
+		}
+		
+	}
+
+		return null;
+	}
+
+
+	private void saveorUpdateEddMappingDtls(EddVO objEddVO, KycEddMapEntity kycEddMapEntity) {
+		kycEddMapEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycEddMapEntity.setCustomerNbr(objEddVO.getCustNumber());
+		kycEddMapEntity.setCntryCde(objEddVO.getCountry());
+		if (CommonUtility.isNotNull(kycEddMapEntity.getLbqMapId()) && (kycEddMapEntity.getVerNum()!=null && kycEddMapEntity.getVerNum()>=1)) {
+			kycEddMapEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+			kycEddMapEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+			eddDao.updateEddMapingDetailsForEntityType(kycEddMapEntity);
+		} else {
+			if(!CommonUtility.isEmptyString(kycEddMapEntity.getMapVal())){
+				kycEddMapEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+				kycEddMapEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+				kycEddMapEntity.setVerNum(AMLCDDConstants.ONE);
+				eddDao.saveEddMapingDetailsForEntityType(kycEddMapEntity);
+			}
+		}
+	}
+	
+	private void saveorUpdateDueDiligenceDtls(EddVO objEddVO, KycEddDetailsVO kycEddDetailsVO) {
+		KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+		kycEddMapEntity.setMapType(CLIENT_DUEDIL_DTLS);
+		if(CommonUtility.isNotNull(kycEddDetailsVO.getDueDiligenceLbqId())){
+			kycEddMapEntity.setLbqMapId(kycEddDetailsVO.getDueDiligenceLbqId());
+		}
+		kycEddMapEntity.setMapVal(kycEddDetailsVO.getDueDiligenceDtls());
+		kycEddMapEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycEddMapEntity.setCustomerNbr(objEddVO.getCustNumber());
+		kycEddMapEntity.setCntryCde(objEddVO.getCountry());
+		if (CommonUtility.isNotNull(kycEddMapEntity.getLbqMapId())) {
+			kycEddMapEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+			kycEddMapEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+			eddDao.updateDueDiligenceMap(kycEddMapEntity);
+		} else {
+			kycEddMapEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+			kycEddMapEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+			kycEddMapEntity.setVerNum(AMLCDDConstants.ONE);
+			eddDao.saveEddMapingDetailsForEntityType(kycEddMapEntity);
+		}
+	}
+	
+	@Override
+	public void saveEddMappingDetails(KycEddMapDtlsVO kycEddMapDtlsVO) throws IllegalAccessException,
+					InvocationTargetException{
+		/* Included for Constraint violation issue between KYC_EDD and KYC_EDD_MAP
+		 * If data is not there in KYC_EDD table for the new record(CDD) then to resolve Constraint violation issue we included this block -- Shaik
+		 */
+		KycEddEntity kycEddEntity = eddDao.getAllEddDetails(kycEddMapDtlsVO.getCddControlNumber(), kycEddMapDtlsVO.getCountry(), kycEddMapDtlsVO.getCustNumber());
+		if(kycEddEntity == null){
+			kycEddEntity = new KycEddEntity();
+			EddVO objEddVO = new EddVO();
+			objEddVO.setCddControlNumber(kycEddMapDtlsVO.getCddControlNumber());
+			objEddVO.setCustNumber(kycEddMapDtlsVO.getCustNumber());
+			objEddVO.setCountry(kycEddMapDtlsVO.getCountry());
+			kycEddEntity.setControlNbr(kycEddMapDtlsVO.getCddControlNumber());
+			kycEddEntity.setCustomerNbr(kycEddMapDtlsVO.getCustNumber());
+			kycEddEntity.setCntryCde(kycEddMapDtlsVO.getCountry());
+			kycEddEntity.setCreatedBy(kycEddMapDtlsVO.getActionDoneByUser());
+			kycEddEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+			kycEddEntity.setVerNum(AMLCDDConstants.ONE);
+			try {
+				eddDao.saveEddDetails(kycEddEntity,objEddVO);
+				kycEddMapDtlsVO.setIsKycEddEntitySaveDoneFirstTime(AMLCDDConstants.Y);
+			} catch (ParseException e) {
+				ExceptionUtils.getFullStackTrace(e);
+			}
+		}
+		/* End of checking data in KYC_EDD table*/
+		if(CommonUtility.isNotNull(kycEddMapDtlsVO.getLbqMapId())){
+			eddDao.updateEddMapingDetailsForEntity(kycEddMapDtlsVO);
+		}
+		else{
+			KycEddMapEntity kycEddMapEntity=new KycEddMapEntity();
+			BeanUtils.copyProperties(kycEddMapEntity, kycEddMapDtlsVO);
+			kycEddMapEntity.setControlNbr(kycEddMapDtlsVO.getCddControlNumber());
+			kycEddMapEntity.setCustomerNbr(kycEddMapDtlsVO.getCustNumber());
+			kycEddMapEntity.setCntryCde(kycEddMapDtlsVO.getCountry());
+			kycEddMapEntity.setCreatedBy(kycEddMapDtlsVO.getActionDoneByUser());
+			kycEddMapEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+			kycEddMapEntity.setVerNum(AMLCDDConstants.ONE);
+			String lbqId=eddDao.saveEddMapingDetailsForEntityType(kycEddMapEntity);
+			kycEddMapDtlsVO.setLbqMapId(lbqId);
+		}
+	}
+	
+	@Override
+	public List<KycEddMapEntity>  getEddMappingDetails(String controlNumber,String countryCode,String customerNumber, String mapType,String language) throws IllegalAccessException, InvocationTargetException{
+		List<KycEddMapEntity> kycEddMapList=eddDao.getAllEddMappingDetails(controlNumber, countryCode, customerNumber,mapType);
+		kycEddMapList = prepareCountryOfResidenceById(kycEddMapList, countryCode, language);
+		return kycEddMapList;
+	}
+	public List<KycEddMapEntity> prepareCountryOfResidenceById(List<KycEddMapEntity> lstKycEddMapEntity,String countryCode, String language) {
+		List<PickListLkUpVO> lstPickListLkUpVO = amlCddCacheUtil.getPickListData(countryCode, language,AMLCDDConstants.ISO_COUNTRY_LKUP);
+		List<PickListLkUpVO> entityTypePickListLkUpVO = amlCddCacheUtil.getPickListData(countryCode, language,AMLCDDConstants.ENTITY_TYPE);
+		if(lstPickListLkUpVO != null) {
+			for(KycEddMapEntity kycEddMapEntity : lstKycEddMapEntity) {
+				String dbCntryOfResidence = kycEddMapEntity.getCntryOfResidence();
+				String actualCntryOfResidence = kycEddMapEntity.getCntryOfResidence();
+				for(PickListLkUpVO pickListLkUpVO : lstPickListLkUpVO) {
+					if(pickListLkUpVO.getCode().equals(dbCntryOfResidence)) {
+						actualCntryOfResidence = pickListLkUpVO.getPickListDesc();
+					}
+				}
+				kycEddMapEntity.setCntryOfResidence(actualCntryOfResidence);
+				String dbMapVal = kycEddMapEntity.getMapVal();
+				String actualMapVal= kycEddMapEntity.getMapVal();
+				for(PickListLkUpVO entPickListLkUpVO : entityTypePickListLkUpVO) {
+					if(entPickListLkUpVO.getCode().equals(dbMapVal)) {
+						actualMapVal = entPickListLkUpVO.getPickListDesc();
+					}
+				}
+				kycEddMapEntity.setMapTypeDesc(actualMapVal);
+				
+				
+			}
+		}
+		return lstKycEddMapEntity;
+	}
+	@Override
+	public List<KycEddMapEntity> getEddMappingDetailsList(String controlNumber,String countryCode,String customerNumber) throws IllegalAccessException, InvocationTargetException{
+		List<KycEddMapEntity> kycEddMapList=eddDao.getEddMappingDetails(controlNumber, countryCode, customerNumber);
+		return kycEddMapList;
+	}
+
+
+	private KycEddEntity apacConversionVotoEddEntity(EddVO objEddVO,KycEddEntity kycEddEntity) throws ParseException, IllegalAccessException, InvocationTargetException {
+		KycEddDetailsVO kycEddDetailsVO = objEddVO.getObjEddEntityDetailsVO();
+		logger.info("Inside apacConversionVotoEddEntity method for Control Number " + objEddVO.getCddControlNumber());
+		if (kycEddDetailsVO != null) {
+			
+			kycEddEntity.setAddScreeningRes(kycEddDetailsVO.getAddScreeningRes());
+			kycEddEntity.setAgreeWithExpectations(kycEddDetailsVO.getAgreeWithExpectations());
+			kycEddEntity.setAmlProgramReq(kycEddDetailsVO.getAmlProgramReq());
+			kycEddEntity.setAnnlBussRevenue(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getAnnlBussRevenue()));
+			kycEddEntity.setAnyGovtAgencSubToOvrsigt(kycEddDetailsVO.getAnyGovtAgencSubToOvrsigt());
+			kycEddEntity.setAnyPvtSecWatchdogAccrOrg(kycEddDetailsVO.getAnyPvtSecWatchdogAccrOrg());
+			kycEddEntity.setAssetCcy(kycEddDetailsVO.getAssetCcy());
+			kycEddEntity.setBussRevenueCcy(kycEddDetailsVO.getBussRevenueCcy());
+			kycEddEntity.setByWhatMethodCustPaid(kycEddDetailsVO.getByWhatMethodCustPaid());
+			kycEddEntity.setCallReportDtls(kycEddDetailsVO.getCallReportDtls());
+			kycEddEntity.setCallReportTxt(kycEddDetailsVO.getCallReportTxt());
+			kycEddEntity.setChangeInClientBuss(kycEddDetailsVO.getChangeInClientBuss());
+			kycEddEntity.setChangeInClientBussDtls(kycEddDetailsVO.getChangeInClientBussDtls());
+			kycEddEntity.setClientAmlAudit(kycEddDetailsVO.getClientAmlAudit());
+			kycEddEntity.setClientAmlBussLines(kycEddDetailsVO.getClientAmlBussLines());
+			kycEddEntity.setClientAmlCddDtls(kycEddDetailsVO.getClientAmlCddDtls());
+			kycEddEntity.setClientAmlComments(kycEddDetailsVO.getClientAmlComments());
+			kycEddEntity.setClientAmlNegNews(kycEddDetailsVO.getClientAmlNegNews());
+			kycEddEntity.setClientAmlProgram(kycEddDetailsVO.getClientAmlProgram());
+			kycEddEntity.setClientAmlTransMon(kycEddDetailsVO.getClientAmlTransMon());
+			kycEddEntity.setClientIssueBearerShare(kycEddDetailsVO.getClientIssueBearerShare());
+			logger.info("Inside apacConversionVotoEddEntity method for Control Number " + objEddVO.getCddControlNumber()+ "Audit Details:" + kycEddEntity.getClientAmlAudit());
+			logger.info("Inside apacConversionVotoEddEntity method for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls:" +kycEddEntity.getClientAmlProgram());
+			logger.info("Inside apacConversionVotoEddEntity method for Control Number " + objEddVO.getCddControlNumber()+ "Audit Details VO:" + kycEddDetailsVO.getClientAmlAudit());
+			logger.info("Inside apacConversionVotoEddEntity method for Control Number " + objEddVO.getCddControlNumber()+ "Aml Prgram Dtls VO:" +kycEddDetailsVO.getClientAmlProgram());
+			kycEddEntity.setClientMjrInvestCtry(kycEddDetailsVO.getClientMjrInvestCtry());
+			kycEddEntity.setClientOsBearerShare(kycEddDetailsVO.getClientOsBearerShare());
+			kycEddEntity.setClientsReview(kycEddDetailsVO.getClientsReview());
+			kycEddEntity.setClientSubstDiscrp(kycEddDetailsVO.getClientSubstDiscrp());
+			kycEddEntity.setClientSubstDiscrpDtls(kycEddDetailsVO.getClientSubstDiscrpDtls());
+			kycEddEntity.setClientWebContent(kycEddDetailsVO.getClientWebContent());
+			kycEddEntity.setClntIndExpdToTerrFin(kycEddDetailsVO.getClntIndExpdToTerrFin());
+			kycEddEntity.setClntOthrFIRelDtls(kycEddDetailsVO.getClntOthrFIRelDtls());
+			kycEddEntity.setCntctEmail(kycEddDetailsVO.getCntctEmail());
+			kycEddEntity.setCntctFirstName(kycEddDetailsVO.getCntctFirstName());
+			kycEddEntity.setCntctLastName(kycEddDetailsVO.getCntctLastName());
+			kycEddEntity.setCntctPosition(kycEddDetailsVO.getCntctPosition());
+			kycEddEntity.setCntctTelphoneNum(kycEddDetailsVO.getCntctTelphoneNum());
+			kycEddEntity.setCntryCde(kycEddDetailsVO.getCntryCde());
+			kycEddEntity.setControlNbr(kycEddDetailsVO.getControlNbr());
+			kycEddEntity.setCorrbWealthDocs(kycEddDetailsVO.getCorrbWealthDocs());
+			kycEddEntity.setCorrbWealthDocType(kycEddDetailsVO.getCorrbWealthDocType());
+			kycEddEntity.setCorrbWealthPercent(kycEddDetailsVO.getCorrbWealthPercent());
+			kycEddEntity.setCustomerNbr(kycEddDetailsVO.getCustomerNbr());
+			kycEddEntity.setCustTrafficDesc(kycEddDetailsVO.getCustTrafficDesc());
+			kycEddEntity.setDateOfVisit(CommonUtility.parseDateSepatedSlash(kycEddDetailsVO.getDateOfVisit()));
+			kycEddEntity.setDescOfBussOps(kycEddDetailsVO.getDescOfBussOps());
+			kycEddEntity.setDiscussCustFinCrimCompl(kycEddDetailsVO.getDiscussCustFinCrimCompl());
+			kycEddEntity.setDoClntPractLawHighRisk(kycEddDetailsVO.getDoClntPractLawHighRisk());
+			kycEddEntity.setDoesClientHoldClientFund(kycEddDetailsVO.getDoesClientHoldClientFund());
+			kycEddEntity.setDoesClientOtherFiRel(kycEddDetailsVO.getDoesClientOtherFiRel());
+			kycEddEntity.setDoesClntUndstdFrdrisks(kycEddDetailsVO.getDoesClntUndstdFrdrisks());
+			kycEddEntity.setIsClientDbaSpecial(kycEddDetailsVO.getIsClientDbaSpecial());
+			kycEddEntity.setIsClientInterBussOnly(kycEddDetailsVO.getIsClientInterBussOnly());
+			kycEddEntity.setIsClientInvlGam(kycEddDetailsVO.getIsClientInvlGam());
+			kycEddEntity.setIsClientSpv(kycEddDetailsVO.getIsClientSpv());
+			kycEddEntity.setIsClientUseCitiaccGam(kycEddDetailsVO.getIsClientUseCitiaccGam());
+			kycEddEntity.setIsClientWritPolicyProc(kycEddDetailsVO.getIsClientWritPolicyProc());
+			kycEddEntity.setIsClntIndExpoToAmlRisk(kycEddDetailsVO.getIsClntIndExpoToAmlRisk());
+			kycEddEntity.setIsClntListedCmpny(kycEddDetailsVO.getIsClntListedCmpny());
+			kycEddEntity.setIsCustContable(kycEddDetailsVO.getIsCustContable());
+			kycEddEntity.setIsCustPremOpenToPublic(kycEddDetailsVO.getIsCustPremOpenToPublic());
+			kycEddEntity.setIsHomeBaseBuss(kycEddDetailsVO.getIsHomeBaseBuss());
+			kycEddEntity.setIsInvntryVisiblDuringVisit(kycEddDetailsVO.getIsInvntryVisiblDuringVisit());
+			kycEddEntity.setIsProcesIndepRevewChlng(kycEddDetailsVO.getIsProcesIndepRevewChlng());
+			kycEddEntity.setLglFrmtnDocuments(kycEddDetailsVO.getLglFrmtnDocuments());
+			kycEddEntity.setLiabilityCcy(kycEddDetailsVO.getLiabilityCcy());
+			kycEddEntity.setLocVisit(kycEddDetailsVO.getLocVisit());
+			kycEddEntity.setMgmtRespContact(kycEddDetailsVO.getMgmtRespContact());
+			kycEddEntity.setMgmtRespContactDate(CommonUtility.parseDateSepatedSlash(kycEddDetailsVO.getMgmtRespContactDate()));
+			kycEddEntity.setMgmtRespTitle(kycEddDetailsVO.getMgmtRespTitle());
+			kycEddEntity.setModifiedBy(kycEddDetailsVO.getModifiedBy());
+		//	kycEddEntity.setModifiedDt(kycEddDetailsVO.getModifiedDt());
+			kycEddEntity.setNatureOfBusiness(kycEddDetailsVO.getNatureOfBusiness());
+			kycEddEntity.setNetAssets(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getNetAssets()));
+			kycEddEntity.setNetLiability(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getNetLiability()));
+			kycEddEntity.setNetWorthAmt(kycEddDetailsVO.getNetWorthAmt());
+			kycEddEntity.setNetWorthCcy(kycEddDetailsVO.getNetWorthCcy());
+			kycEddEntity.setNmOfExchStockSymbl(kycEddDetailsVO.getNmOfExchStockSymbl());
+			kycEddEntity.setNoOfEmployees(kycEddDetailsVO.getNoOfEmployees());
+			kycEddEntity.setNoOfEmploysInPremises(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getNoOfEmploysInPremises()));
+			kycEddEntity.setNoOfLocation(kycEddDetailsVO.getNoOfLocation());
+			kycEddEntity.setOthMethodCustPaidExpln(kycEddDetailsVO.getOthMethodCustPaidExpln());
+			kycEddEntity.setOthrComments(kycEddDetailsVO.getOthrComments());
+			kycEddEntity.setOwnership3Years(kycEddDetailsVO.getOwnership3Years());
+			kycEddEntity.setOwnership3YearsDtls(kycEddDetailsVO.getOwnership3YearsDtls());
+			kycEddEntity.setPartOfTop200Law(kycEddDetailsVO.getPartOfTop200Law());
+			kycEddEntity.setPctPublicShares(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getPctPublicShares()));
+			kycEddEntity.setPlaceAndDtOfIncorp(kycEddDetailsVO.getPlaceAndDtOfIncorp());
+			kycEddEntity.setProdInvtryDesc(kycEddDetailsVO.getProdInvtryDesc());
+			kycEddEntity.setPubAvlChngInOwn(kycEddDetailsVO.getPubAvlChngInOwn());
+			kycEddEntity.setPurpOfCustOrgNpo(kycEddDetailsVO.getPurpOfCustOrgNpo());
+			kycEddEntity.setPrtShareType(kycEddDetailsVO.getPrtShareType());
+			kycEddEntity.setSdnBlackListRes(kycEddDetailsVO.getSdnBlackListRes());
+			kycEddEntity.setSeedMoneyAmt(CommonUtility.stringToBigDecmal(kycEddDetailsVO.getSeedMoneyAmt()));
+			kycEddEntity.setSeedMoneyCcy(kycEddDetailsVO.getSeedMoneyCcy());
+			kycEddEntity.setSeedMoneySrc(kycEddDetailsVO.getSeedMoneySrc());
+			kycEddEntity.setSeeMoneyTiming(kycEddDetailsVO.getSeeMoneyTiming());
+			kycEddEntity.setShareType(kycEddDetailsVO.getShareType());
+			kycEddEntity.setSigRevAmt(kycEddDetailsVO.getSigRevAmt());
+			kycEddEntity.setSigRevCcy(kycEddDetailsVO.getSigRevCcy());
+			kycEddEntity.setSigRevSrc(kycEddDetailsVO.getSigRevSrc());
+			kycEddEntity.setSigRevTiming(kycEddDetailsVO.getSigRevTiming());
+			kycEddEntity.setSpaceOccupied(kycEddDetailsVO.getSpaceOccupied());
+			kycEddEntity.setSqrFootSpaceOccup(kycEddDetailsVO.getSqrFootSpaceOccup());
+			kycEddEntity.setSrcCorrbWealth(kycEddDetailsVO.getSrcCorrbWealth());
+			kycEddEntity.setStockExchName(kycEddDetailsVO.getStockExchName());
+			kycEddEntity.setTargetClientDesc(kycEddDetailsVO.getTargetClientDesc());
+			kycEddEntity.setUltParMjrStockExch(kycEddDetailsVO.getUltParMjrStockExch());
+			kycEddEntity.setWhatMeansFundCollectbyNpo(kycEddDetailsVO.getWhatMeansFundCollectbyNpo());
+			kycEddEntity.setWhomVisited(kycEddDetailsVO.getWhomVisited());
+			kycEddEntity.setWrittenPoliciesNoExplain(kycEddDetailsVO.getWrittenPoliciesNoExplain());
+		}
+		return kycEddEntity;
+	}
+
+	private KycEddEntity setCommonEddEntityDtls(EddVO objEddVO, KycEddEntity kycEddEntity) throws ParseException {
+		KycEddDetailsVO eddEntityDetailsVO = objEddVO.getObjEddEntityDetailsVO();
+		if (eddEntityDetailsVO != null) {
+		kycEddEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycEddEntity.setCustomerNbr(objEddVO.getCustNumber());
+		kycEddEntity.setCntryCde(objEddVO.getCountry());
+
+		kycEddEntity.setAnnlBussRevenue(CommonUtility.stringToBigDecmal(eddEntityDetailsVO.getAnnlBussRevenue()));	
+		kycEddEntity.setBussRevenueCcy(eddEntityDetailsVO.getBussRevenueCcy());
+		
+		kycEddEntity.setPriPlaceOfBuss(eddEntityDetailsVO.getPriPlaceOfBuss());	
+		
+		kycEddEntity.setSrvcsProvdByClnt(eddEntityDetailsVO.getDoesClientServices());
+		
+		
+		//kycEddEntity.setCountriesOfPrimOpers(eddEntityDetailsVO.getCountriesOfPrimOpers());
+		
+		//kycEddEntity.setIndustClasifySystem("B");
+		kycEddEntity.setIndustClasifySystem(eddEntityDetailsVO.getIndustryClassificationSystemNAIC());
+		
+		
+		//industryClassificationSystemNAIC
+		//kycEddEntity.setind
+		
+		
+		kycEddEntity.setShareType(eddEntityDetailsVO.getShareType()); 
+		kycEddEntity.setStockExchName(eddEntityDetailsVO.getStockExchName());  
+		kycEddEntity.setPctPublicShares(CommonUtility.stringToBigDecmal(eddEntityDetailsVO.getPctPublicShares()));       
+		// yet to change
+		kycEddEntity.setShareType(eddEntityDetailsVO.getShareType());    
+		kycEddEntity.setPrtShareType(eddEntityDetailsVO.getPrtShareType());
+		kycEddEntity.setUltParMjrStockExch(eddEntityDetailsVO.getUltParMjrStockExch());
+		kycEddEntity.setNoOfLocation(eddEntityDetailsVO.getNoOfLocation()); 
+		kycEddEntity.setIsHomeBaseBuss(eddEntityDetailsVO.getIsHomeBaseBuss());
+		kycEddEntity.setDoClntPractLawHighRisk(eddEntityDetailsVO.getDoClntPractLawHighRisk());    
+		kycEddEntity.setNatureOfBusiness(eddEntityDetailsVO.getNatureOfBusiness());
+		kycEddEntity.setIsClientInterBussOnly(eddEntityDetailsVO.getIsClientInterBussOnly());       
+	//	kycEddEntity.setClientWebContent(eddEntityDetailsVO.getAboutUsWebPage()); 
+		kycEddEntity.setNoOfEmployees(eddEntityDetailsVO.getNoOfEmployees());
+		kycEddEntity.setClientsReview(eddEntityDetailsVO.getClientsReview());  
+		kycEddEntity.setTargetClientDesc(eddEntityDetailsVO.getTargetClientDesc());
+		
+		if (CommonUtility.isNotNull(eddEntityDetailsVO.getVerNum())) {
+			kycEddEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+			kycEddEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+			kycEddEntity.setVerNum(Long.parseLong(eddEntityDetailsVO.getVerNum()));
+			eddDao.updateEddDetails(kycEddEntity,objEddVO);
+		} else {
+			kycEddEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+			kycEddEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+			kycEddEntity.setVerNum(AMLCDDConstants.ONE);
+			eddDao.saveEddDetails(kycEddEntity,objEddVO);
+		}
+		}
+		return kycEddEntity;
+	}
+
+	private KycEddEntity converVotoEddEntity(EddVO objEddVO, KycEddEntity existingKycEddEntity) throws IllegalAccessException, InvocationTargetException, ParseException, InstantiationException, NoSuchMethodException {
+		EddDetailsVO eddDetailsVO = objEddVO.getObjEddDetailsVO();
+		KycEddEntity kycEddEntity = new KycEddEntity();
+		if (eddDetailsVO != null) {
+			kycEddEntity.setControlNbr(objEddVO.getCddControlNumber());
+			kycEddEntity.setCustomerNbr(objEddVO.getCustNumber());
+			kycEddEntity.setCntryCde(objEddVO.getCountry());
+			kycEddEntity.setClientSubstDiscrp(eddDetailsVO.getSubsetDiscrepancy());
+			kycEddEntity.setClientSubstDiscrpDtls(eddDetailsVO.getSubsetDiscrepancyDetails());
+			kycEddEntity.setIsClientInvlGam(eddDetailsVO.getIsInternetGamblingBus());
+			kycEddEntity.setClientMjrInvestCtry(eddDetailsVO.getMajorInvestmentCountry());
+			kycEddEntity.setNetWorthCcy(eddDetailsVO.getNetWorthCurrency());
+			kycEddEntity.setNetWorthAmt(eddDetailsVO.getNetWorthAmount());
+			if (CommonUtility.isNotNull(eddDetailsVO.getAssets())) {
+				kycEddEntity.setNetAssets(CommonUtility.stringToBigDecmal(eddDetailsVO.getAssets()));
+			}
+			kycEddEntity.setAssetCcy(eddDetailsVO.getAssetCurrency());
+			if (CommonUtility.isNotNull(eddDetailsVO.getLiabilities())) {
+				kycEddEntity.setNetLiability(CommonUtility.stringToBigDecmal(eddDetailsVO.getLiabilities()));
+			}
+			kycEddEntity.setLiabilityCcy(eddDetailsVO.getLiabilitiesCurrency());
+			kycEddEntity.setCorrbWealthPercent(eddDetailsVO.getLevelWealthCorrob());
+			kycEddEntity.setCorrbWealthDocType(eddDetailsVO.getCorrobWealthDocType());
+			kycEddEntity.setCorrbWealthDocs(eddDetailsVO.getCorrobWealthDoc());
+		    kycEddEntity.setSrcCorrbWealth(eddDetailsVO.getSrcCorrobWealth());
+			if (CommonUtility.isNotNull(eddDetailsVO.getEddVerNum())) {
+				kycEddEntity.setModifiedBy(objEddVO.getActionDoneByUser());
+				kycEddEntity.setModifiedDt(new Timestamp(System.currentTimeMillis()));
+				kycEddEntity.setVerNum(Long.parseLong(eddDetailsVO.getEddVerNum()));
+				eddDao.updateEddDetails(kycEddEntity,objEddVO);
+			} else {
+				kycEddEntity.setCreatedBy(objEddVO.getActionDoneByUser());
+				kycEddEntity.setCreatedDt(new Timestamp(System.currentTimeMillis()));
+				kycEddEntity.setVerNum(AMLCDDConstants.ONE);
+				eddDao.saveEddDetails(kycEddEntity,objEddVO);	
+			} 
+		}
+		return kycEddEntity;
+	}
+
+	private KycCustomerDetailsIdentEntity converVotoEddCustomerIdEntity(EddVO objEddVO, EddMemberVO eddMemberVO) {
+		KycCustomerDetailsIdentEntity kycCustomerDetailsIdentEntity = new KycCustomerDetailsIdentEntity();
+		KycCustomerDetailsIdentPKEntity kycCustomerDetailsIdentPKEntity = new KycCustomerDetailsIdentPKEntity();
+		kycCustomerDetailsIdentPKEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycCustomerDetailsIdentPKEntity.setCntryCde(objEddVO.getCountry());
+		kycCustomerDetailsIdentPKEntity.setCustomerNbr(eddMemberVO.getCustomerNbr());
+		kycCustomerDetailsIdentPKEntity.setIdType(eddMemberVO.getIdType());
+		kycCustomerDetailsIdentEntity.setId(kycCustomerDetailsIdentPKEntity);
+		kycCustomerDetailsIdentEntity.setIdCntry(eddMemberVO.getIdCountry());
+		return kycCustomerDetailsIdentEntity;
+	}
+
+	private KycMemberIdentificationEntity converVotoEddMemberIdEntity(EddVO objEddVO, EddMemberVO eddMemberVO) {
+		KycMemberIdentificationEntity kycMemberIdentificationEntity = new KycMemberIdentificationEntity();
+		KycMemberIdentificationPKEntity kycMemberIdentificationPKEntity = new KycMemberIdentificationPKEntity();
+		kycMemberIdentificationPKEntity.setIdType(eddMemberVO.getIdType());
+		kycMemberIdentificationPKEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycMemberIdentificationPKEntity.setMemberId(eddMemberVO.getMemberId());
+		kycMemberIdentificationEntity.setId(kycMemberIdentificationPKEntity);
+		kycMemberIdentificationEntity.setMemberCustomerNbr(eddMemberVO.getCustomerNbr());
+		kycMemberIdentificationEntity.setMemberCntryCode(objEddVO.getCountry());
+		kycMemberIdentificationEntity.setIdCntry(eddMemberVO.getIdCountry());
+		return kycMemberIdentificationEntity;
+	}
+
+	private void setSowTypes(EddVO objEddVO) {
+		ArrayList<String> sowTypes = new ArrayList<String>();
+		if (objEddVO.getObjEddSowVO() != null) {
+			if (CommonUtility.isNotNull(objEddVO.getIsCompanyProf())
+					&& objEddVO.getIsCompanyProf().equals(AMLCDDConstants.Y)) {
+				sowTypes.add(SowTypesEnum.CMP.toString());
+			}
+			if (CommonUtility.isNotNull(objEddVO.getIsSalary()) && objEddVO.getIsSalary().equals(AMLCDDConstants.Y)) {
+				sowTypes.add(SowTypesEnum.SALRY.toString());
+			}
+			if (CommonUtility.isNotNull(objEddVO.getIsInheritance())
+					&& objEddVO.getIsInheritance().equals(AMLCDDConstants.Y)) {
+				sowTypes.add(SowTypesEnum.INHERT.toString());
+			}
+			if (CommonUtility.isNotNull(objEddVO.getIsInvestment())
+					&& objEddVO.getIsInvestment().equals(AMLCDDConstants.Y)) {
+				sowTypes.add(SowTypesEnum.INVTRSTFND.toString());
+			}
+			if (CommonUtility.isNotNull(objEddVO.getIsOther()) && objEddVO.getIsOther().equals(AMLCDDConstants.Y)) {
+				sowTypes.add(SowTypesEnum.OTH.toString());
+			}
+			if (sowTypes != null && sowTypes.size() > 0) {
+				objEddVO.getObjEddSowVO().setSowType(sowTypes);
+			}
+		}
+	}
+
+	private MemberSpfAddendumVO converEDDSowCollabtoSPFAdden(EddVO objEddVO) {
+
+		MemberSpfAddendumVO memberSpfAddendumVO = new MemberSpfAddendumVO();
+		memberSpfAddendumVO.setControlNbr(objEddVO.getCddControlNumber());
+		memberSpfAddendumVO.setFirstName((objEddVO.getObjEddDetailsVO().getFirstName()));
+		memberSpfAddendumVO.setLastName(objEddVO.getObjEddDetailsVO().getLastName());
+		memberSpfAddendumVO.setCustomerNo(objEddVO.getCustNumber());
+		memberSpfAddendumVO.setBusinessLine(objEddVO.getBusinessLine());//Added by Rakesh related to edd spf corroboration.
+		memberSpfAddendumVO.setCountry(objEddVO.getCountry());//Added by Rakesh related to edd spf corroboration.
+		memberSpfAddendumVO.setCustType(objEddVO.getCustType());//Added by Rakesh related to edd spf corroboration.
+
+		memberSpfAddendumVO.setCorrbWealthPercent(objEddVO.getObjEddDetailsVO().getLevelWealthCorrob());
+		memberSpfAddendumVO.setCorrobWealthDocType(objEddVO.getObjEddDetailsVO().getCorrobWealthDocType());
+		memberSpfAddendumVO.setSrcOfWlthCorrob(objEddVO.getObjEddDetailsVO().getSrcCorrobWealth());
+
+		return memberSpfAddendumVO;
+
+		/*
+		 * MemberSpfAddendumEntity memberSpfAddendumEntity = new
+		 * MemberSpfAddendumEntity(); if (memberSpfAddendumEntity != null) {
+		 * memberSpfAddendumEntity.setCorrbWealthPercent(objEddVO.
+		 * getObjEddDetailsVO().getLevelWealthCorrob());
+		 * memberSpfAddendumEntity.setCorrOfWealthDocType(objEddVO.
+		 * getObjEddDetailsVO().getCorrobWealthDocType());
+		 * memberSpfAddendumEntity.setSrcOfWlthCorrob(objEddVO.
+		 * getObjEddDetailsVO().getSrcCorrobWealth().toCharArray());
+		 * memberSpfAddendumEntity.setControlNbr(objEddVO.getCddControlNumber())
+		 * ; memberSpfAddendumEntity.setFirstName(objEddVO.getObjEddDetailsVO().
+		 * getFirstName());
+		 * memberSpfAddendumEntity.setLastName(objEddVO.getObjEddDetailsVO().
+		 * getLastName());
+		 * memberSpfAddendumEntity.setMemberId(objEddVO.getCustNumber()); }
+		 * return memberSpfAddendumEntity;
+		 */
+	}
+
+	private KYCCustomerDetailsEntity converVotoCustomerDetailsEntity(EddVO objEddVO) {
+		KYCCustomerDetailsEntity kycCustomerDetailsEntity = new KYCCustomerDetailsEntity();
+		kycCustomerDetailsEntity.setControlNbr(objEddVO.getCddControlNumber());
+		kycCustomerDetailsEntity.setCntryCde(objEddVO.getCountry());
+		kycCustomerDetailsEntity.setCustomerNbr(objEddVO.getCustNumber());
+		kycCustomerDetailsEntity.setOtherTypeOfEmployment(objEddVO.getObjEddDetailsVO().getOtherEmploymentType());
+
+		return kycCustomerDetailsEntity;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.citigroup.amlcdd.forms.edd.service.IEddService#getAttachment(java.lang.String, java.lang.String, java.lang.String, java.lang.String)
+	 */
+	@Override
+	public List<KycAttachmentEntity> getAttachment(String customerNbr, String controlNbr, String country, String sectionNm) {
+		return eddDao.getAttachment(customerNbr,controlNbr,country,sectionNm);
+	}
+
+	private void convertCodeToDesc(EddMemberVO eddMemberVO, String countryCode , String language) {
+		List<PickListLkUpVO> countryPickList = amlCddCacheUtil.getPickListData(countryCode, language,
+				AMLCDDConstants.ISO_COUNTRY_LKUP);
+		if (countryPickList != null && !countryPickList.isEmpty()) {/*
+			PickListLkUpVO pickListCountryVO = countryPickList.stream()
+					.filter(rr -> eddMemberVO.getPrimaryCountry() != null
+					&& eddMemberVO.getPrimaryCountry().equals(rr.getCode()))
+					.findAny().orElse(null);
+			if (pickListCountryVO != null) {
+				eddMemberVO.setPrimaryCountry(pickListCountryVO.getPickListDesc());
+			}
+		*/}
+	}
+
+	private String checkIsUBO(EddMemberEntity objEddMemberEntity, ArrayList<String> countryList, String cddStatus) {
+
+		String strUBO = null;
+		String ownershipPercent = objEddMemberEntity.getPercentOwnership();
+		String countryOfResidence = objEddMemberEntity.getCntryResidence();
+		String nationality = objEddMemberEntity.getNationality();
+		String regCountry = objEddMemberEntity.getRegCountry();
+		String riskRating = objEddMemberEntity.getRiskRating();
+		boolean uboDtlsNotCaptured=false;
+		ArrayList<String> highRiskList = new ArrayList<String>();
+		highRiskList.add(AMLCDDConstants.HH);
+		highRiskList.add(AMLCDDConstants.HM);
+		highRiskList.add(AMLCDDConstants.HL);
+
+		if((AMLCDDConstants.APPROVED.equals(cddStatus) || AMLCDDConstants.COMPLETED.equals(cddStatus) 
+				|| AMLCDDConstants.PENDING_APPROVAL.equals(cddStatus)
+				|| AMLCDDConstants.PENDING_ADVISEMENT.equals(cddStatus)
+				|| AMLCDDConstants.TERMINATED.equals(cddStatus))){
+
+			if(CommonUtility.isEmptyString(objEddMemberEntity.getLevelWealthCorrob())    ||
+					CommonUtility.isEmptyString(objEddMemberEntity.getCorrobWealthSrc()) ||
+					CommonUtility.isEmptyString(objEddMemberEntity.getCorrobWealth())    ||
+					CommonUtility.isEmptyString(objEddMemberEntity.getAttachmentId())){
+				uboDtlsNotCaptured=true;
+			}
+		}
+		if (!uboDtlsNotCaptured && CommonUtility.isNotNull(ownershipPercent) && CommonUtility.isNotNull(countryOfResidence)
+				&& CommonUtility.isNotNull(nationality) && CommonUtility.isNotNull(riskRating)
+				&& CommonUtility.isNotNull(regCountry) && countryList != null) {
+			boolean ownershipUBOFlag = false;
+			String ownershipPer[] = ownershipPercent.split(COMMA_DELIMITER);
+			for (String strPercent : ownershipPer) {
+				if (Integer.parseInt(strPercent) >= 50) {
+					ownershipUBOFlag = true;
+				}
+			}
+
+			if (ownershipUBOFlag && ((countryList.contains(nationality)) || (countryList.contains(countryOfResidence)))
+					&& (highRiskList.contains(riskRating)) && (!nationality.equals(regCountry))) {
+				strUBO = AMLCDDConstants.Y;
+			} else {
+				strUBO = AMLCDDConstants.N;
+			}
+		} else {
+			strUBO = AMLCDDConstants.N;
+		}
+		return strUBO;
+	}
+
+	private Map<String, String> getMemberUBODtls(ArrayList<EddMemberEntity> listEddEntityMemberEntity,
+			ArrayList<String> countryList, String cddStatus) {
+		Map<String, String> mapUBO = new HashMap<String, String>();
+		if (listEddEntityMemberEntity != null && countryList != null) {
+			for (EddMemberEntity objEddMemberEntity : listEddEntityMemberEntity) {
+				String strUBO = checkIsUBO(objEddMemberEntity, countryList,cddStatus);
+				mapUBO.put(objEddMemberEntity.getMemberId(), strUBO);
+			}
+		}
+		return mapUBO;
+	}
+
+	@Override
+	public Map<String, String> getMemberUBODetails(String cddControlNbr, String customerNbr, String country)
+			throws ParseException, SQLException {
+		ArrayList<EddMemberEntity> listEddEntityMemberEntity = eddDao.getEddEntityMemberDetails(cddControlNbr, country,
+				customerNbr);
+		KycMainEntity kycMain = cddDao.getBaseCddDetails(cddControlNbr, country);
+		ArrayList<String> countryList = eddDao.getHighRiskCountiresList();
+		return getMemberUBODtls(listEddEntityMemberEntity, countryList,kycMain.getStatus());
+	}
+	
+	private void setRelAndAsscnTypeValues(EddMemberVO objEddMemberVO, HashMap<String, String> relTypeMap,
+			HashMap<String, String> asscnTypeMap) {
+		if (objEddMemberVO.getRelType() != null) {
+			String relType[] = objEddMemberVO.getRelType().split(COMMA_DELIMITER);
+			Set<String> relTypeSet = new HashSet<String>(Arrays.asList(relType));
+			StringBuilder sb = new StringBuilder();
+			for (String relTypeKey : relTypeSet) {
+				if (relTypeMap != null && relTypeMap.get(relTypeKey) != null) {
+					sb.append(COMMA_DELIMITER).append(relTypeMap.get(relTypeKey));
+				} else {
+					sb.append(COMMA_DELIMITER).append(relTypeKey);
+				}
+			}
+			String relTypeFinal = sb.substring(COMMA_DELIMITER.length());
+			objEddMemberVO.setRelType(relTypeFinal);
+		}
+		if (objEddMemberVO.getAssocType() != null) {
+			String asscnType[] = objEddMemberVO.getAssocType().split(COMMA_DELIMITER);
+			Set<String> asscnTypeSet = new HashSet<String>(Arrays.asList(asscnType));
+			StringBuilder sb = new StringBuilder();
+			for (String asscnTypeKey : asscnTypeSet) {
+				if (asscnTypeMap != null && asscnTypeMap.get(asscnTypeKey) != null) {
+					sb.append(COMMA_DELIMITER).append(asscnTypeMap.get(asscnTypeKey));
+				} else {
+					sb.append(COMMA_DELIMITER).append(asscnTypeKey);
+				}
+			}
+			String asscnTypeFinal = sb.substring(COMMA_DELIMITER.length());
+			objEddMemberVO.setAssocType(asscnTypeFinal);
+		}
+		if (objEddMemberVO.getPercentOwnership() != null) {
+			String percentOwnership[] = objEddMemberVO.getPercentOwnership().split(COMMA_DELIMITER);
+			Set<String> percentOwnershipSet = new HashSet<String>(Arrays.asList(percentOwnership));
+			StringBuilder sb = new StringBuilder();
+			for (String percentOwnershipVal : percentOwnershipSet) {
+					sb.append(COMMA_DELIMITER).append(percentOwnershipVal);
+			}
+			String percentOwnershipFinal = sb.substring(COMMA_DELIMITER.length());
+			objEddMemberVO.setPercentOwnership(percentOwnershipFinal);
+		}
+	}
+
+	@Override
+	public Map<String, List<EddMemberVO>> getCustomerIdTypeMap(EddVO eddVO, String language) {
+		  logger.info("Inside getCustomerIdTypeMap for CDD " + eddVO.getCustNumber());
+			
+	        Map<String, List<EddMemberVO>> IdTypeMap=eddDao.getIdTypesForCustomer(eddVO.getCddControlNumber(),eddVO.getCustNumber(),
+						eddVO.getCountry());
+				
+				logger.info("outside getCustomerIdTypeMap for CDD " + eddVO.getCustNumber());
+			return IdTypeMap;
+	}
+
+	@Override
+	public Map<String, List<EddMemberVO>> getMemberIdTypeMap(EddVO eddVO, String language) {
+      
+		logger.info("Inside getMemberIdTypeMap for CDD " + eddVO.getCustNumber());
+		
+		Map<String, List<EddMemberVO>> IdTypeMap=eddDao.getIdTypesForMember(eddVO.getCddControlNumber(),eddVO.getCustNumber(),
+					eddVO.getCountry());
+			
+			logger.info("outside getMemberIdTypeMap for CDD " + eddVO.getCustNumber());
+		return IdTypeMap;
+	}
+
+
+	@Override
+	public void getEddExistingDetails(EddVO objEddVO) throws IllegalAccessException, InvocationTargetException {
+		KycEddEntity existingKycEddEntity=eddDao.getAllEddDetails(objEddVO.getCddControlNumber(), objEddVO.getCountry(), objEddVO.getCustNumber());
+		if(existingKycEddEntity==null){
+			 existingKycEddEntity=new KycEddEntity();
+		}
+		KycEddDetailsVO kycEddDetailsVO=new KycEddDetailsVO();
+		BeanUtils.copyProperties(kycEddDetailsVO, existingKycEddEntity);
+		objEddVO.setObjEddEntityDetailsVO(kycEddDetailsVO);
+	}
+
+
+	@Override
+	public void deleteEddMappingDetails(List<String> deleteEddMapIds) throws IllegalAccessException, InvocationTargetException {
+		eddDao.deleteEddmappingDetails(deleteEddMapIds);
+		
+	}
+
+
+	@Override
+	public void updateCorrobDetatils(EddVO objEddVO) {
+		eddDao.updateCorrobDetatils(objEddVO);		
+	}
+
+
+	@Override
+	public KycEddMapDtlsVO getEddMapByMapId(KycEddMapDtlsVO kycEddMapDtlsVO) {
+		eddDao.getEddMapByMapId(kycEddMapDtlsVO);
+		return kycEddMapDtlsVO;
+	}
+	private void convertEDDRetailMemberToEntity(EddMemberVO eddMemberVO, KycMemberUBODetailsEntity kycMemberUBODetailsEntity){
+		
+		kycMemberUBODetailsEntity.setCorrbWealthPercent(eddMemberVO.getLevelWealthCorrob());
+		kycMemberUBODetailsEntity.setCorrbWealthDocType(eddMemberVO.getCorrobWealthSrc());
+		kycMemberUBODetailsEntity.setSrcOfWlthCorrob(eddMemberVO.getCorrobWealth());
+		kycMemberUBODetailsEntity.setEvidSrcOfWlthCorrob(eddMemberVO.getEvidSrcOfWlthCorrob());
+		kycMemberUBODetailsEntity.setMemberID(eddMemberVO.getMemberId());
+		kycMemberUBODetailsEntity.setMemberUBOID(eddMemberVO.getMemberUBOId());
+	}
+	private void convertEDDRetailMemberUBOToEntity(EddMemberVO eddMemberVO, KycMemberUBOMapEntity kycMemberUBOEntity){
+		kycMemberUBOEntity.setMemberUBOID(eddMemberVO.getMemberUBOId());
+		
+	}
+
+}
